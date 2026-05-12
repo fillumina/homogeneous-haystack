@@ -13,6 +13,7 @@ import argparse
 import csv
 import json
 import random
+import socket
 import string
 import sys
 import time
@@ -148,11 +149,11 @@ def build_prompt(haystack_text, needles):
 # ---------------------------------------------------------------------------
 
 def query_llama(endpoint, messages, model=None, temperature=0.0,
-                max_tokens=10, timeout=120):
+                max_tokens=10, timeout=300):
     """Send a request to the llama-server OpenAI-compatible endpoint.
 
     Returns (response_json, latency_ms).
-    Raises on HTTP errors (errors are kept as data, not retried).
+    Raises on HTTP errors or timeouts (errors are kept as data, not retried).
     """
     payload = {
         "model": model or "local",
@@ -175,6 +176,9 @@ def query_llama(endpoint, messages, model=None, temperature=0.0,
             latency_ms = (time.monotonic() - start) * 1000
             result = json.loads(raw)
             return result, latency_ms
+    except socket.timeout as e:
+        latency_ms = (time.monotonic() - start) * 1000
+        raise HaystackQueryError(f"Timed out after {latency_ms:.0f}ms") from e
     except urllib.error.HTTPError as e:
         latency_ms = (time.monotonic() - start) * 1000
         body = e.read().decode("utf-8", errors="replace")
@@ -281,6 +285,7 @@ def run_single_experiment(run_index, config, seed):
 
     # Query
     needle_keys = {n["key"] for n in needles}
+    latency_ms = 0
     try:
         response, latency_ms = query_llama(
             config["endpoint"],
@@ -288,13 +293,13 @@ def run_single_experiment(run_index, config, seed):
             model=config.get("model"),
             temperature=config["temperature"],
             max_tokens=config["max_tokens"],
+            timeout=config.get("timeout", 300),
         )
         model_name = extract_model_name(response)
         response_text = response["choices"][0]["message"]["content"]
     except HaystackQueryError as e:
         model_name = "error"
         response_text = str(e)
-        latency_ms = latency_ms if 'latency_ms' in dir() else 0
 
     # Parse and score
     parsed = parse_response(response_text, needle_keys)
@@ -347,6 +352,8 @@ def main():
                         help="Sampling temperature (default: 0.0)")
     parser.add_argument("--max-tokens", type=int, default=10,
                         help="Max tokens per response (default: 10)")
+    parser.add_argument("--timeout", type=int, default=300,
+                        help="Request timeout in seconds (default: 300)")
     parser.add_argument("--repeat", type=int, default=1,
                         help="Number of independent runs (default: 1)")
     parser.add_argument("--seed", type=int, default=None,
@@ -366,6 +373,7 @@ def main():
         "distractor_pct": args.distractor_pct,
         "temperature": args.temperature,
         "max_tokens": args.max_tokens,
+        "timeout": args.timeout,
     }
 
     seed = args.seed if args.seed is not None else random.randint(0, 2**31)
@@ -401,7 +409,10 @@ def main():
     # Summary
     total = len(all_rows)
     correct = sum(1 for r in all_rows if r["correct"] == 1)
-    print(f"Overall accuracy: {correct}/{total} ({100*correct/total:.1f}%)")
+    if total > 0:
+        print(f"Overall accuracy: {correct}/{total} ({100*correct/total:.1f}%)")
+    else:
+        print("No results collected.")
 
 
 if __name__ == "__main__":
