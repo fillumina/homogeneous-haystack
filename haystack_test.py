@@ -349,6 +349,7 @@ def run_single_experiment(run_index, config, seed, show=None):
     if is_single:
         # Query one needle at a time
         all_results = []
+        all_interactions = []
         for needle in needles:
             messages = build_single_needle_prompt(haystack_text, needle["key"])
             try:
@@ -376,11 +377,23 @@ def run_single_experiment(run_index, config, seed, show=None):
                     "actual": val,
                     "content": content,
                 })
+                all_interactions.append({
+                    "messages": messages,
+                    "response": response,
+                    "content": content,
+                    "needle": needle,
+                })
             except HaystackQueryError as e:
                 all_results.append({
                     "needle": needle,
                     "actual": "",
                     "content": str(e),
+                })
+                all_interactions.append({
+                    "messages": messages,
+                    "response": None,
+                    "content": str(e),
+                    "needle": needle,
                 })
         parsed = {r["needle"]["key"]: r["actual"] for r in all_results}
         response_text = "\n".join(r["content"] for r in all_results)
@@ -426,14 +439,41 @@ def run_single_experiment(run_index, config, seed, show=None):
         print("=" * 60)
         print(f"Run {run_index} — model={model_name}")
         print("=" * 60)
-        if show in ("prompt", "all") or is_full:
-            prompt_text = messages[1]["content"]
-            print(f"\n--- PROMPT ({len(prompt_text)} chars, {len(prompt_text.split())} tokens est.) ---")
-            if is_full:
-                print(prompt_text)
-            else:
-                print(_truncate(prompt_text, max_lines=5))
-        if show in ("response", "all") or is_full:
+        if is_single and show in ("prompt", "all") or is_full:
+            # Single mode: show all interactions
+            for idx, interaction in enumerate(all_interactions):
+                print(f"\n--- INTERACTION {idx + 1}/{len(all_interactions)} ---")
+                for i, msg in enumerate(interaction["messages"]):
+                    role = msg["role"]
+                    content = msg["content"]
+                    print(f"\n--- MESSAGE {i} ({role}, {len(content)} chars) ---")
+                    if is_full:
+                        print(content)
+                    else:
+                        print(_truncate(content, max_lines=5))
+                if show in ("response", "all") or is_full:
+                    print(f"\n--- RESPONSE (needle={interaction['needle']['key']}) ---")
+                    if interaction["response"] is not None:
+                        print(json.dumps(interaction["response"], indent=2, default=str))
+                        reasoning = interaction["response"].get("choices", [{}])[0].get("message", {}).get("reasoning_content", "")
+                        if reasoning:
+                            print(f"\n--- REASONING_CONTENT ({len(reasoning)} chars) ---")
+                            print(reasoning)
+                    else:
+                        print("(no response)")
+                    print(f"--- Parsed answer ---")
+                    print(repr(interaction["content"]))
+        elif (show in ("prompt", "all") or is_full) and not is_single:
+            print(f"\n--- ALL MESSAGES ({len(messages)} messages) ---")
+            for i, msg in enumerate(messages):
+                role = msg["role"]
+                content = msg["content"]
+                print(f"\n--- MESSAGE {i} ({role}, {len(content)} chars) ---")
+                if is_full:
+                    print(content)
+                else:
+                    print(_truncate(content, max_lines=5))
+        if not is_single and (show in ("response", "all") or is_full):
             print(f"\n--- RAW RESPONSE (JSON) ---")
             if raw_response is not None:
                 print(json.dumps(raw_response, indent=2, default=str))
@@ -446,12 +486,12 @@ def run_single_experiment(run_index, config, seed, show=None):
                 if reasoning:
                     print(f"\n--- REASONING_CONTENT ({len(reasoning)} chars) ---")
                     print(reasoning)
-            print(f"\n--- PARSED RESULTS ---")
-            for needle, score in zip(needles, score_needles(needles, parsed)):
-                depth = round(needle["index"] / (len(pairs) - 1) * 100, 1) if len(pairs) > 1 else 0.0
-                status = "OK" if score["correct"] else "FAIL"
-                print(f"  [{status}] {needle['key']} (depth {depth}%) "
-                      f"expected={score['expected']!r} actual={score['actual']!r}")
+        print(f"\n--- PARSED RESULTS ---")
+        for needle, score in zip(needles, score_needles(needles, parsed)):
+            depth = round(needle["index"] / (len(pairs) - 1) * 100, 1) if len(pairs) > 1 else 0.0
+            status = "OK" if score["correct"] else "FAIL"
+            print(f"  [{status}] {needle['key']} (depth {depth}%) "
+                  f"expected={score['expected']!r} actual={score['actual']!r}")
         print("=" * 60)
         print()
 
