@@ -259,7 +259,17 @@ def score_needles(needles, parsed):
 # Experiment runner
 # ---------------------------------------------------------------------------
 
-def run_single_experiment(run_index, config, seed):
+def _truncate(text, max_lines=3, prefix="..."):
+    """Show first and last N lines of a long text."""
+    lines = text.split("\n")
+    if len(lines) <= max_lines * 2:
+        return text
+    first = "\n".join(lines[:max_lines])
+    last = "\n".join(lines[-max_lines:])
+    return f"{first}\n{prefix}\n{last}"
+
+
+def run_single_experiment(run_index, config, seed, show=None):
     """Run one complete experiment: generate, query, score, return rows."""
     random.seed(seed)
 
@@ -317,6 +327,28 @@ def run_single_experiment(run_index, config, seed):
             "actual": score["actual"],
         })
 
+    # Debug output
+    if show:
+        print()
+        print("=" * 60)
+        print(f"Run {run_index} — model={model_name}")
+        print("=" * 60)
+        if show in ("prompt", "all"):
+            prompt_text = messages[1]["content"]
+            print(f"\n--- PROMPT ({len(prompt_text)} chars, {len(prompt_text.split())} tokens est.) ---")
+            print(_truncate(prompt_text, max_lines=5))
+        if show in ("response", "all"):
+            print(f"\n--- RAW RESPONSE ---")
+            print(repr(response_text))
+            print(f"\n--- PARSED RESULTS ---")
+            for needle, score in zip(needles, score_needles(needles, parsed)):
+                depth = round(needle["index"] / (len(pairs) - 1) * 100, 1) if len(pairs) > 1 else 0.0
+                status = "OK" if score["correct"] else "FAIL"
+                print(f"  [{status}] {needle['key']} (depth {depth}%) "
+                      f"expected={score['expected']!r} actual={score['actual']!r}")
+        print("=" * 60)
+        print()
+
     return rows, model_name
 
 
@@ -354,6 +386,8 @@ def main():
                         help="Max tokens per response (default: 10)")
     parser.add_argument("--timeout", type=int, default=300,
                         help="Request timeout in seconds (default: 300)")
+    parser.add_argument("--show", choices=["prompt", "response", "all"],
+                        help="Print prompt/response for debugging (prompt=response/all)")
     parser.add_argument("--repeat", type=int, default=1,
                         help="Number of independent runs (default: 1)")
     parser.add_argument("--seed", type=int, default=None,
@@ -389,7 +423,7 @@ def main():
         print(f"Run {run_idx + 1}/{args.repeat}...", end=" ", flush=True)
         try:
             run_seed = seed + run_idx
-            rows, model_name = run_single_experiment(run_idx, config, run_seed)
+            rows, model_name = run_single_experiment(run_idx, config, run_seed, show=args.show)
             all_rows.extend(rows)
             correct_count = sum(1 for r in rows if r["correct"] == 1)
             print(f"model={model_name}, "
