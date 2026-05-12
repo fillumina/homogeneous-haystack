@@ -132,8 +132,6 @@ def build_prompt(haystack_text, needles):
     Format: list of pairs, then one question per needle, answer format KEY=VALUE.
     """
     lines = [
-        SYSTEM_PROMPT,
-        "",
         haystack_text,
         "",
         "Now answer for each key. Use the format KEY=VALUE on each line:",
@@ -201,31 +199,52 @@ def extract_model_name(response):
 # Response parsing
 # ---------------------------------------------------------------------------
 
-def parse_response(response_text, needle_keys):
+def parse_response(response_text, needle_keys, ordered_keys=None):
     """Parse the model's response into a dict mapping key -> value string.
 
-    Skips lines that don't match any queried key.
+    Handles two formats:
+    1. KEY=VALUE lines (explicit key matching)
+    2. Plain number lines assigned to keys by position order
+
     Non-numeric values are ignored.
-    Missing keys are not included.
     """
     if not response_text:
         return {}
 
     found = {}
+    if ordered_keys is None:
+        ordered_keys = list(needle_keys)
+    implicit_values = []
+
     for line in response_text.strip().split("\n"):
         line = line.strip()
-        if "=" not in line:
+        if not line:
             continue
-        parts = line.split("=", 1)
-        key = parts[0].strip()
-        val = parts[1].strip()
-        if key in needle_keys and val:
-            # Only keep if value looks numeric
+        if "=" in line:
+            parts = line.split("=", 1)
+            key = parts[0].strip()
+            val = parts[1].strip()
+            if key in needle_keys and val:
+                try:
+                    int(val)
+                    found[key] = val
+                except ValueError:
+                    pass
+        else:
+            # Plain number — could be an implicit answer
             try:
-                int(val)
-                found[key] = val
+                int(line)
+                implicit_values.append(line)
             except ValueError:
                 pass
+
+    # Assign implicit values to keys that weren't found explicitly, by position
+    if implicit_values:
+        unfound_keys = [k for k in ordered_keys if k not in found]
+        for i, val in enumerate(implicit_values):
+            if i < len(unfound_keys):
+                found[unfound_keys[i]] = val
+
     return found
 
 
@@ -281,6 +300,7 @@ def run_single_experiment(run_index, config, seed, show=None):
     """Run one complete experiment: generate, query, score, return rows."""
     random.seed(seed)
     is_full = config.get("full", False)
+    all_interactions = []
 
     # Generate haystack
     haystack_text, pairs = build_haystack(
@@ -418,7 +438,8 @@ def run_single_experiment(run_index, config, seed, show=None):
             response_text = str(e)
 
         # Parse and score
-        parsed = parse_response(response_text, needle_keys)
+        ordered_keys = [n["key"] for n in needles]
+        parsed = parse_response(response_text, needle_keys, ordered_keys)
 
     # Collect rows
     rows = []
@@ -439,7 +460,7 @@ def run_single_experiment(run_index, config, seed, show=None):
         print("=" * 60)
         print(f"Run {run_index} — model={model_name}")
         print("=" * 60)
-        if is_single and show in ("prompt", "all") or is_full:
+        if is_single and (show in ("prompt", "all") or is_full):
             # Single mode: show all interactions
             for idx, interaction in enumerate(all_interactions):
                 print(f"\n--- INTERACTION {idx + 1}/{len(all_interactions)} ---")
