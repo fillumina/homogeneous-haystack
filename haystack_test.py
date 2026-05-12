@@ -147,18 +147,21 @@ def build_prompt(haystack_text, needles):
 # ---------------------------------------------------------------------------
 
 def query_llama(endpoint, messages, model=None, temperature=0.0,
-                max_tokens=10, timeout=300):
+                max_tokens=10, timeout=300, stream=False):
     """Send a request to the llama-server OpenAI-compatible endpoint.
 
     Returns (response_json, latency_ms).
     Raises on HTTP errors or timeouts (errors are kept as data, not retried).
+
+    When stream=True, accumulates all SSE chunks into a single response
+    object similar to the non-streaming format.
     """
     payload = {
         "model": model or "local",
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
-        "stream": False,
+        "stream": stream,
     }
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
@@ -170,9 +173,62 @@ def query_llama(endpoint, messages, model=None, temperature=0.0,
     start = time.monotonic()
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8")
+            if not stream:
+                raw = resp.read().decode("utf-8")
+                latency_ms = (time.monotonic() - start) * 1000
+                result = json.loads(raw)
+                return result, latency_ms
+
+            # Streaming: accumulate SSE chunks
+            content = ""
+            reasoning_content = ""
+            finish_reason = None
+            usage = {}
+            model_name = "unknown"
+            chunk_count = 0
+
+            for line in resp:
+                line = line.decode("utf-8").strip()
+                if not line or not line.startswith("data: "):
+                    continue
+                if line == "data: [DONE]":
+                    break
+
+                chunk = json.loads(line[6:])  # strip "data: "
+                chunk_count += 1
+
+                choice = chunk.get("choices", [{}])[0]
+                delta = choice.get("delta", {})
+
+                if "content" in delta and delta["content"] is not None:
+                    content += delta["content"]
+                if "reasoning_content" in delta and delta["reasoning_content"] is not None:
+                    reasoning_content += delta["reasoning_content"]
+                if choice.get("finish_reason"):
+                    finish_reason = choice["finish_reason"]
+                if "model" in chunk:
+                    model_name = chunk["model"]
+                if "usage" in chunk and chunk["usage"]:
+                    usage = chunk["usage"]
+
             latency_ms = (time.monotonic() - start) * 1000
-            result = json.loads(raw)
+
+            # Build response object matching non-streaming format
+            result = {
+                "choices": [{
+                    "index": 0,
+                    "finish_reason": finish_reason or "length",
+                    "message": {
+                        "role": "assistant",
+                        "content": content,
+                    }
+                }],
+                "model": model_name,
+                "usage": usage,
+            }
+            # Store reasoning separately for extract_content
+            result["_reasoning_content"] = reasoning_content
+
             return result, latency_ms
     except socket.timeout as e:
         latency_ms = (time.monotonic() - start) * 1000
@@ -291,7 +347,7 @@ def _truncate(text, max_lines=3, prefix="..."):
 def build_single_needle_prompt(haystack_text, needle_key):
     """Build a prompt for a single needle query."""
     return [
-        {"role": "system", "content": "You will be given a list of key=value pairs. Answer with JUST the number, nothing else."},
+        {"role": "system", "content": "These are random key=value pairs. Find the value for the given key by looking it up in the list. Answer with JUST the number, nothing else."},
         {"role": "user", "content": f"{haystack_text}\n\n{needle_key}="},
     ]
 
@@ -331,6 +387,9 @@ def run_single_experiment(run_index, config, seed, show=None):
         if not content:
             # Some models put output in reasoning_content
             reasoning = choice.get("message", {}).get("reasoning_content", "")
+            if not reasoning:
+                # Streaming mode stores it at top level
+                reasoning = choice.get("_reasoning_content", "")
             if reasoning:
                 # If we have a needle_key, search reasoning for KEY = VALUE
                 if needle_key:
@@ -380,6 +439,7 @@ def run_single_experiment(run_index, config, seed, show=None):
                     temperature=config["temperature"],
                     max_tokens=config["max_tokens"],
                     timeout=config.get("timeout", 300),
+                    stream=config.get("stream", False),
                 )
                 raw_response = response
                 if model_name == "unknown":
@@ -429,6 +489,7 @@ def run_single_experiment(run_index, config, seed, show=None):
                 temperature=config["temperature"],
                 max_tokens=config["max_tokens"],
                 timeout=config.get("timeout", 300),
+                stream=config.get("stream", False),
             )
             raw_response = response
             model_name = extract_model_name(response)
@@ -476,7 +537,10 @@ def run_single_experiment(run_index, config, seed, show=None):
                     print(f"\n--- RESPONSE (needle={interaction['needle']['key']}) ---")
                     if interaction["response"] is not None:
                         print(json.dumps(interaction["response"], indent=2, default=str))
-                        reasoning = interaction["response"].get("choices", [{}])[0].get("message", {}).get("reasoning_content", "")
+                        choice = interaction["response"].get("choices", [{}])[0]
+                        reasoning = choice.get("message", {}).get("reasoning_content", "")
+                        if not reasoning:
+                            reasoning = choice.get("_reasoning_content", "")
                         if reasoning:
                             print(f"\n--- REASONING_CONTENT ({len(reasoning)} chars) ---")
                             print(reasoning)
@@ -503,7 +567,10 @@ def run_single_experiment(run_index, config, seed, show=None):
             print(f"\n--- CONTENT FIELD ---")
             print(repr(response_text))
             if raw_response is not None:
-                reasoning = raw_response.get("choices", [{}])[0].get("message", {}).get("reasoning_content", "")
+                choice = raw_response.get("choices", [{}])[0]
+                reasoning = choice.get("message", {}).get("reasoning_content", "")
+                if not reasoning:
+                    reasoning = choice.get("_reasoning_content", "")
                 if reasoning:
                     print(f"\n--- REASONING_CONTENT ({len(reasoning)} chars) ---")
                     print(reasoning)
@@ -555,10 +622,12 @@ def main():
                         help="Request timeout in seconds (default: 300)")
     parser.add_argument("--show", choices=["prompt", "response", "all"],
                         help="Print prompt/response for debugging (prompt=response/all)")
-    parser.add_argument("--full", action="store_true",
-                        help="Print full untruncated prompt and reasoning_content")
     parser.add_argument("--single", action="store_true",
                         help="Query one needle at a time (for debugging)")
+    parser.add_argument("--stream", action="store_true",
+                        help="Use streaming to capture full reasoning + answer")
+    parser.add_argument("--full", action="store_true",
+                        help="Print full untruncated prompt and reasoning_content")
     parser.add_argument("--repeat", type=int, default=1,
                         help="Number of independent runs (default: 1)")
     parser.add_argument("--seed", type=int, default=None,
@@ -581,6 +650,7 @@ def main():
         "timeout": args.timeout,
         "single": args.single,
         "full": args.full,
+        "stream": args.stream,
     }
 
     seed = args.seed if args.seed is not None else random.randint(0, 2**31)
