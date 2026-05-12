@@ -271,8 +271,8 @@ def score_needles(needles, parsed):
             # Real needle
             correct = 1 if actual == str(expected) else 0
         else:
-            # Distractor — should be empty or wrong
-            correct = 0
+            # Distractor — key not in haystack; model should return nothing
+            correct = 1 if actual == "" else 0
         results.append({
             "needle_key": key,
             "expected": expected if expected is not None else "",
