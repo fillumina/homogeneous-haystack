@@ -269,6 +269,14 @@ def _truncate(text, max_lines=3, prefix="..."):
     return f"{first}\n{prefix}\n{last}"
 
 
+def build_single_needle_prompt(haystack_text, needle_key):
+    """Build a prompt for a single needle query."""
+    return [
+        {"role": "system", "content": "You will be given a list of key=value pairs. Answer with JUST the number, nothing else."},
+        {"role": "user", "content": f"{haystack_text}\n\n{needle_key}="},
+    ]
+
+
 def run_single_experiment(run_index, config, seed, show=None):
     """Run one complete experiment: generate, query, score, return rows."""
     random.seed(seed)
@@ -290,29 +298,113 @@ def run_single_experiment(run_index, config, seed, show=None):
         haystack_keys,
     )
 
-    # Build prompt
-    messages = build_prompt(haystack_text, needles)
-
-    # Query
-    needle_keys = {n["key"] for n in needles}
+  # Query
+    is_single = config.get("single", False)
     latency_ms = 0
-    try:
-        response, latency_ms = query_llama(
-            config["endpoint"],
-            messages,
-            model=config.get("model"),
-            temperature=config["temperature"],
-            max_tokens=config["max_tokens"],
-            timeout=config.get("timeout", 300),
-        )
-        model_name = extract_model_name(response)
-        response_text = response["choices"][0]["message"]["content"]
-    except HaystackQueryError as e:
-        model_name = "error"
-        response_text = str(e)
+    raw_response = None
+    model_name = "unknown"
 
-    # Parse and score
-    parsed = parse_response(response_text, needle_keys)
+    def extract_content(choice, needle_key=None):
+        """Extract response text, checking content and reasoning_content."""
+        content = choice.get("message", {}).get("content", "")
+        if not content:
+            # Some models put output in reasoning_content
+            reasoning = choice.get("message", {}).get("reasoning_content", "")
+            if reasoning:
+                # If we have a needle_key, search reasoning for KEY = VALUE
+                if needle_key:
+                    for line in reasoning.split("\n"):
+                        line = line.strip()
+                        if line.startswith(needle_key + " = "):
+                            val = line.split("=", 1)[1].strip()
+                            try:
+                                int(val)
+                                return val
+                            except ValueError:
+                                pass
+                # Try to extract answer from reasoning (look for KEY = VALUE)
+                lines = reasoning.strip().split("\n")
+                for line in lines:
+                    line = line.strip()
+                    if "=" in line:
+                        parts = line.split("=", 1)
+                        val = parts[1].strip()
+                        try:
+                            int(val)
+                            return val
+                        except ValueError:
+                            pass
+                # If no KEY=VALUE found, try last numeric token
+                tokens = reasoning.split()
+                for token in reversed(tokens):
+                    token = token.strip(".,;:!?\"'`)")
+                    try:
+                        int(token)
+                        return token
+                    except ValueError:
+                        pass
+        return content
+
+    if is_single:
+        # Query one needle at a time
+        all_results = []
+        for needle in needles:
+            messages = build_single_needle_prompt(haystack_text, needle["key"])
+            try:
+                response, latency_ms = query_llama(
+                    config["endpoint"],
+                    messages,
+                    model=config.get("model"),
+                    temperature=config["temperature"],
+                    max_tokens=config["max_tokens"],
+                    timeout=config.get("timeout", 300),
+                )
+                raw_response = response
+                if model_name == "unknown":
+                    model_name = extract_model_name(response)
+                content = extract_content(response["choices"][0], needle["key"])
+                # Parse single value
+                val = ""
+                try:
+                    val = content.strip()
+                    int(val)
+                except ValueError:
+                    val = ""
+                all_results.append({
+                    "needle": needle,
+                    "actual": val,
+                    "content": content,
+                })
+            except HaystackQueryError as e:
+                all_results.append({
+                    "needle": needle,
+                    "actual": "",
+                    "content": str(e),
+                })
+        parsed = {r["needle"]["key"]: r["actual"] for r in all_results}
+        response_text = "\n".join(r["content"] for r in all_results)
+    else:
+        # Build prompt
+        messages = build_prompt(haystack_text, needles)
+        needle_keys = {n["key"] for n in needles}
+        try:
+            response, latency_ms = query_llama(
+                config["endpoint"],
+                messages,
+                model=config.get("model"),
+                temperature=config["temperature"],
+                max_tokens=config["max_tokens"],
+                timeout=config.get("timeout", 300),
+            )
+            raw_response = response
+            model_name = extract_model_name(response)
+            response_text = extract_content(response["choices"][0])
+        except HaystackQueryError as e:
+            model_name = "error"
+            response_text = str(e)
+
+        # Parse and score
+        parsed = parse_response(response_text, needle_keys)
 
     # Collect rows
     rows = []
@@ -327,7 +419,7 @@ def run_single_experiment(run_index, config, seed, show=None):
             "actual": score["actual"],
         })
 
-    # Debug output
+     # Debug output
     if show:
         print()
         print("=" * 60)
@@ -338,7 +430,12 @@ def run_single_experiment(run_index, config, seed, show=None):
             print(f"\n--- PROMPT ({len(prompt_text)} chars, {len(prompt_text.split())} tokens est.) ---")
             print(_truncate(prompt_text, max_lines=5))
         if show in ("response", "all"):
-            print(f"\n--- RAW RESPONSE ---")
+            print(f"\n--- RAW RESPONSE (JSON) ---")
+            if raw_response is not None:
+                print(json.dumps(raw_response, indent=2, default=str))
+            else:
+                print("(no response received)")
+            print(f"\n--- CONTENT FIELD ---")
             print(repr(response_text))
             print(f"\n--- PARSED RESULTS ---")
             for needle, score in zip(needles, score_needles(needles, parsed)):
@@ -382,12 +479,14 @@ def main():
                         help="Fraction of needles that are distractors (default: 0.08)")
     parser.add_argument("--temperature", type=float, default=0.0,
                         help="Sampling temperature (default: 0.0)")
-    parser.add_argument("--max-tokens", type=int, default=10,
-                        help="Max tokens per response (default: 10)")
+    parser.add_argument("--max-tokens", type=int, default=100,
+                        help="Max tokens per response (default: 100)")
     parser.add_argument("--timeout", type=int, default=300,
                         help="Request timeout in seconds (default: 300)")
     parser.add_argument("--show", choices=["prompt", "response", "all"],
                         help="Print prompt/response for debugging (prompt=response/all)")
+    parser.add_argument("--single", action="store_true",
+                        help="Query one needle at a time (for debugging)")
     parser.add_argument("--repeat", type=int, default=1,
                         help="Number of independent runs (default: 1)")
     parser.add_argument("--seed", type=int, default=None,
@@ -408,6 +507,7 @@ def main():
         "temperature": args.temperature,
         "max_tokens": args.max_tokens,
         "timeout": args.timeout,
+        "single": args.single,
     }
 
     seed = args.seed if args.seed is not None else random.randint(0, 2**31)
