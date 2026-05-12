@@ -280,6 +280,7 @@ def build_single_needle_prompt(haystack_text, needle_key):
 def run_single_experiment(run_index, config, seed, show=None):
     """Run one complete experiment: generate, query, score, return rows."""
     random.seed(seed)
+    is_full = config.get("full", False)
 
     # Generate haystack
     haystack_text, pairs = build_haystack(
@@ -420,16 +421,19 @@ def run_single_experiment(run_index, config, seed, show=None):
         })
 
      # Debug output
-    if show:
+    if show or is_full:
         print()
         print("=" * 60)
         print(f"Run {run_index} — model={model_name}")
         print("=" * 60)
-        if show in ("prompt", "all"):
+        if show in ("prompt", "all") or is_full:
             prompt_text = messages[1]["content"]
             print(f"\n--- PROMPT ({len(prompt_text)} chars, {len(prompt_text.split())} tokens est.) ---")
-            print(_truncate(prompt_text, max_lines=5))
-        if show in ("response", "all"):
+            if is_full:
+                print(prompt_text)
+            else:
+                print(_truncate(prompt_text, max_lines=5))
+        if show in ("response", "all") or is_full:
             print(f"\n--- RAW RESPONSE (JSON) ---")
             if raw_response is not None:
                 print(json.dumps(raw_response, indent=2, default=str))
@@ -437,6 +441,11 @@ def run_single_experiment(run_index, config, seed, show=None):
                 print("(no response received)")
             print(f"\n--- CONTENT FIELD ---")
             print(repr(response_text))
+            if raw_response is not None:
+                reasoning = raw_response.get("choices", [{}])[0].get("message", {}).get("reasoning_content", "")
+                if reasoning:
+                    print(f"\n--- REASONING_CONTENT ({len(reasoning)} chars) ---")
+                    print(reasoning)
             print(f"\n--- PARSED RESULTS ---")
             for needle, score in zip(needles, score_needles(needles, parsed)):
                 depth = round(needle["index"] / (len(pairs) - 1) * 100, 1) if len(pairs) > 1 else 0.0
@@ -485,6 +494,8 @@ def main():
                         help="Request timeout in seconds (default: 300)")
     parser.add_argument("--show", choices=["prompt", "response", "all"],
                         help="Print prompt/response for debugging (prompt=response/all)")
+    parser.add_argument("--full", action="store_true",
+                        help="Print full untruncated prompt and reasoning_content")
     parser.add_argument("--single", action="store_true",
                         help="Query one needle at a time (for debugging)")
     parser.add_argument("--repeat", type=int, default=1,
@@ -508,6 +519,7 @@ def main():
         "max_tokens": args.max_tokens,
         "timeout": args.timeout,
         "single": args.single,
+        "full": args.full,
     }
 
     seed = args.seed if args.seed is not None else random.randint(0, 2**31)
