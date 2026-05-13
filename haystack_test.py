@@ -9,6 +9,8 @@ Usage:
   python haystack_test.py --haystack-n 5000 --num-needles 100 --repeat 3
 """
 
+from __future__ import annotations
+
 import argparse
 import csv
 import json
@@ -19,32 +21,41 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from typing import Any
+
+# ---------------------------------------------------------------------------
+# Types
+# ---------------------------------------------------------------------------
+
+HaystackPair = tuple[str, int]
+Needle = dict[str, Any]
+Message = dict[str, str]
+Config = dict[str, Any]
+ScoredNeedle = dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
 # Data generation
 # ---------------------------------------------------------------------------
 
-def generate_key(length=8):
+def generate_key(length: int = 8) -> str:
     """Generate a random uppercase string of fixed length."""
     return "".join(random.choices(string.ascii_uppercase, k=length))
 
 
-def generate_value(val_min=1000, val_max=9999):
+def generate_value(val_min: int = 1000, val_max: int = 9999) -> int:
     """Generate a random integer, avoiding obviously round numbers."""
     while True:
         v = random.randint(val_min, val_max)
-        # Avoid multiples of 100 — they feel "round" and could bias the model
         if v % 100 != 0:
             return v
 
 
-def build_haystack(n, key_len=8, val_min=1000, val_max=9999):
-    """Build a list of `n` random KEY = VALUE lines.
-
-    Returns (text, list_of (key, value) tuples).
-    """
-    pairs = []
+def build_haystack(
+    n: int, key_len: int = 8, val_min: int = 1000, val_max: int = 9999
+) -> tuple[str, list[HaystackPair]]:
+    """Build a list of `n` random KEY = VALUE lines."""
+    pairs: list[HaystackPair] = []
     for _ in range(n):
         key = generate_key(key_len)
         value = generate_value(val_min, val_max)
@@ -57,7 +68,7 @@ def build_haystack(n, key_len=8, val_min=1000, val_max=9999):
 # Needle selection
 # ---------------------------------------------------------------------------
 
-def pick_needle_positions(n_total, n_needles):
+def pick_needle_positions(n_total: int, n_needles: int) -> list[int]:
     """Pick `n_needles` indices uniformly spaced across [0, n_total)."""
     if n_needles >= n_total:
         return list(range(n_total))
@@ -65,21 +76,18 @@ def pick_needle_positions(n_total, n_needles):
     return [int(i * step) for i in range(n_needles)]
 
 
-def select_needles(pairs, n_needles, distractor_pct=0.08, haystack_keys=None):
-    """Select needles from the haystack, mixing real and distractor keys.
-
-    Returns:
-        needles: list of dicts with keys:
-            - index: position in haystack
-            - key: the key string
-            - expected: the expected value (None for distractors)
-    """
+def select_needles(
+    pairs: list[HaystackPair],
+    n_needles: int,
+    distractor_pct: float = 0.08,
+    haystack_keys: set[str] | None = None,
+) -> list[Needle]:
+    """Select needles from the haystack, mixing real and distractor keys."""
     positions = pick_needle_positions(len(pairs), n_needles)
     n_real = int(n_needles * (1 - distractor_pct))
     n_distractor = n_needles - n_real
 
-    # Real needles — pick from actual haystack positions
-    real_needles = []
+    real_needles: list[Needle] = []
     for idx in positions[:n_real]:
         key, value = pairs[idx]
         real_needles.append({
@@ -89,11 +97,10 @@ def select_needles(pairs, n_needles, distractor_pct=0.08, haystack_keys=None):
             "is_distractor": False,
         })
 
-    # Distractor needles — keys NOT in the haystack
     if haystack_keys is None:
         haystack_keys = set(k for k, _ in pairs)
 
-    distractor_keys = set()
+    distractor_keys: set[str] = set()
     tries = 0
     while len(distractor_keys) < n_distractor and tries < n_distractor * 20:
         k = generate_key(len(real_needles[0]["key"]) if real_needles else 8)
@@ -101,7 +108,7 @@ def select_needles(pairs, n_needles, distractor_pct=0.08, haystack_keys=None):
             distractor_keys.add(k)
         tries += 1
 
-    distractor_needles = []
+    distractor_needles: list[Needle] = []
     for idx, key in zip(positions[n_real:], distractor_keys):
         distractor_needles.append({
             "index": idx,
@@ -110,7 +117,6 @@ def select_needles(pairs, n_needles, distractor_pct=0.08, haystack_keys=None):
             "is_distractor": True,
         })
 
-    # Interleave real and distractor by their original position
     all_needles = real_needles + distractor_needles
     all_needles.sort(key=lambda n: n["index"])
     return all_needles
@@ -120,32 +126,34 @@ def select_needles(pairs, n_needles, distractor_pct=0.08, haystack_keys=None):
 # Prompt building
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = (
+SYSTEM_PROMPT: str = (
     "You will be given a list of key-value pairs and asked to retrieve "
     "the value for each key. Read the pairs carefully."
 )
 
 
-def build_prompt(haystack_text, needles):
-    """Build the full prompt message.
-
-    Format: list of pairs, then one question per needle, answer format KEY=VALUE.
-    """
-    lines = [
+def build_prompt(haystack_text: str, needles: list[Needle]) -> list[Message]:
+    """Build the full prompt message."""
+    lines: list[str] = [
         haystack_text,
         "",
         "Now answer for each key. Use the format KEY=VALUE on each line:",
     ]
     for needle in needles:
         lines.append(f"What is the value for {needle['key']}?")
-    return [{"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": "\n".join(lines)}]
+    return [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": "\n".join(lines)},
+    ]
 
 
-def build_single_needle_prompt(haystack_text, needle_key):
+def build_single_needle_prompt(haystack_text: str, needle_key: str) -> list[Message]:
     """Build a prompt for a single needle query."""
     return [
-        {"role": "system", "content": "These are random key=value pairs. Find the value for the given key by looking it up in the list. Answer with JUST the number, nothing else."},
+        {
+            "role": "system",
+            "content": "These are random key=value pairs. Find the value for the given key by looking it up in the list. Answer with JUST the number, nothing else.",
+        },
         {"role": "user", "content": f"{haystack_text}\n\n{needle_key}="},
     ]
 
@@ -154,14 +162,20 @@ def build_single_needle_prompt(haystack_text, needle_key):
 # API query
 # ---------------------------------------------------------------------------
 
-def query_llama(endpoint, messages, model=None, temperature=0.0,
-                max_tokens=8192, timeout=300):
+def query_llama(
+    endpoint: str,
+    messages: list[Message],
+    model: str | None = None,
+    temperature: float = 0.0,
+    max_tokens: int = 8192,
+    timeout: int = 300,
+) -> tuple[dict[str, Any], float]:
     """Send a request to the llama-server OpenAI-compatible endpoint.
 
     Returns (response_json, latency_ms).
-    Raises on HTTP errors or timeouts (errors are kept as data, not retried).
+    Raises HaystackQueryError on HTTP errors or timeouts.
     """
-    payload = {
+    payload: dict[str, Any] = {
         "model": model or "local",
         "messages": messages,
         "temperature": temperature,
@@ -198,7 +212,7 @@ class HaystackQueryError(Exception):
     pass
 
 
-def extract_model_name(response):
+def extract_model_name(response: dict[str, Any]) -> str:
     """Extract model name from OpenAI-compatible API response."""
     return response.get("model", "unknown")
 
@@ -207,22 +221,23 @@ def extract_model_name(response):
 # Response parsing
 # ---------------------------------------------------------------------------
 
-def parse_response(response_text, needle_keys, ordered_keys=None):
-    """Parse the model's response into a dict mapping key -> value string.
+def parse_response(
+    response_text: str,
+    needle_keys: set[str],
+    ordered_keys: list[str] | None = None,
+) -> dict[str, str]:
+    """Parse the model's response into a dict mapping key -> value.
 
-    Handles two formats:
-    1. KEY=VALUE lines (explicit key matching)
-    2. Plain number lines assigned to keys by position order
-
-    Non-numeric values are ignored.
+    Handles KEY=VALUE lines (explicit) and plain number lines (implicit,
+    assigned by position order).
     """
     if not response_text:
         return {}
 
-    found = {}
+    found: dict[str, str] = {}
     if ordered_keys is None:
         ordered_keys = list(needle_keys)
-    implicit_values = []
+    implicit_values: list[str] = []
 
     for line in response_text.strip().split("\n"):
         line = line.strip()
@@ -239,14 +254,12 @@ def parse_response(response_text, needle_keys, ordered_keys=None):
                 except ValueError:
                     pass
         else:
-            # Plain number — could be an implicit answer
             try:
                 int(line)
                 implicit_values.append(line)
             except ValueError:
                 pass
 
-    # Assign implicit values to keys that weren't found explicitly, by position
     if implicit_values:
         unfound_keys = [k for k in ordered_keys if k not in found]
         for i, val in enumerate(implicit_values):
@@ -256,22 +269,16 @@ def parse_response(response_text, needle_keys, ordered_keys=None):
     return found
 
 
-def score_needles(needles, parsed):
-    """Score each needle against parsed responses.
-
-    Returns list of dicts with:
-        depth_pct, needle_key, expected, actual, correct
-    """
-    results = []
+def score_needles(needles: list[Needle], parsed: dict[str, str]) -> list[ScoredNeedle]:
+    """Score each needle against parsed responses."""
+    results: list[ScoredNeedle] = []
     for needle in needles:
         key = needle["key"]
         expected = needle["expected"]
         actual = parsed.get(key, "")
         if expected is not None:
-            # Real needle
             correct = 1 if actual == str(expected) else 0
         else:
-            # Distractor — key not in haystack; model should return nothing
             correct = 1 if actual == "" else 0
         results.append({
             "needle_key": key,
@@ -286,7 +293,7 @@ def score_needles(needles, parsed):
 # Experiment runner
 # ---------------------------------------------------------------------------
 
-def _truncate(text, max_lines=5, prefix="..."):
+def _truncate(text: str, max_lines: int = 5, prefix: str = "...") -> str:
     """Show first and last N lines of a long text."""
     lines = text.split("\n")
     if len(lines) <= max_lines * 2:
@@ -296,22 +303,22 @@ def _truncate(text, max_lines=5, prefix="..."):
     return f"{first}\n{prefix}\n{last}"
 
 
-def run_single_experiment(run_index, config, seed, show=None):
+def run_single_experiment(
+    run_index: int, config: Config, seed: int, show: str | None = None
+) -> tuple[list[dict[str, Any]], str]:
     """Run one complete experiment: generate, query, score, return rows."""
     random.seed(seed)
-    is_full = config.get("full", False)
-    all_interactions = []
+    is_full: bool = config.get("full", False)
+    all_interactions: list[dict[str, Any]] = []
 
-    # Generate haystack
     haystack_text, pairs = build_haystack(
         config["haystack_n"],
         config["key_len"],
         config["val_min"],
         config["val_max"],
     )
-    haystack_keys = set(k for k, _ in pairs)
+    haystack_keys: set[str] = set(k for k, _ in pairs)
 
-    # Select needles
     needles = select_needles(
         pairs,
         config["num_needles"],
@@ -319,15 +326,13 @@ def run_single_experiment(run_index, config, seed, show=None):
         haystack_keys,
     )
 
-    # Query
-    is_single = config.get("single", False)
-    latency_ms = 0
-    raw_response = None
-    model_name = "unknown"
+    is_single: bool = config.get("single", False)
+    latency_ms: float = 0.0
+    raw_response: dict[str, Any] | None = None
+    model_name: str = "unknown"
 
     if is_single:
-        # Query one needle at a time
-        all_results = []
+        all_results: list[dict[str, Any]] = []
         all_interactions = []
         for needle in needles:
             messages = build_single_needle_prompt(haystack_text, needle["key"])
@@ -344,7 +349,6 @@ def run_single_experiment(run_index, config, seed, show=None):
                 if model_name == "unknown":
                     model_name = extract_model_name(response)
                 content = response["choices"][0]["message"].get("content", "")
-                # Parse single value
                 val = ""
                 try:
                     val = content.strip()
@@ -377,9 +381,8 @@ def run_single_experiment(run_index, config, seed, show=None):
         parsed = {r["needle"]["key"]: r["actual"] for r in all_results}
         response_text = "\n".join(r["content"] for r in all_results)
     else:
-        # Build prompt
         messages = build_prompt(haystack_text, needles)
-        needle_keys = {n["key"] for n in needles}
+        needle_keys: set[str] = {n["key"] for n in needles}
         try:
             response, latency_ms = query_llama(
                 config["endpoint"],
@@ -396,14 +399,14 @@ def run_single_experiment(run_index, config, seed, show=None):
             model_name = "error"
             response_text = str(e)
 
-        # Parse and score
-        ordered_keys = [n["key"] for n in needles]
+        ordered_keys: list[str] = [n["key"] for n in needles]
         parsed = parse_response(response_text, needle_keys, ordered_keys)
 
-    # Collect rows
-    rows = []
+    rows: list[dict[str, Any]] = []
     for needle, score in zip(needles, score_needles(needles, parsed)):
-        depth_pct = round(needle["index"] / (len(pairs) - 1) * 100, 2) if len(pairs) > 1 else 0.0
+        depth_pct = round(
+            needle["index"] / (len(pairs) - 1) * 100, 2
+        ) if len(pairs) > 1 else 0.0
         rows.append({
             "run": run_index,
             "haystack_size": config["haystack_n"],
@@ -413,14 +416,12 @@ def run_single_experiment(run_index, config, seed, show=None):
             "actual": score["actual"],
         })
 
-    # Debug output
     if show or is_full:
         print()
         print("=" * 60)
         print(f"Run {run_index} — model={model_name}")
         print("=" * 60)
         if is_single and (show in ("prompt", "all") or is_full):
-            # Single mode: show all interactions
             for idx, interaction in enumerate(all_interactions):
                 print(f"\n--- INTERACTION {idx + 1}/{len(all_interactions)} ---")
                 for i, msg in enumerate(interaction["messages"]):
@@ -459,7 +460,9 @@ def run_single_experiment(run_index, config, seed, show=None):
             print(repr(response_text))
         print(f"\n--- PARSED RESULTS ---")
         for needle, score in zip(needles, score_needles(needles, parsed)):
-            depth = round(needle["index"] / (len(pairs) - 1) * 100, 1) if len(pairs) > 1 else 0.0
+            depth = round(
+                needle["index"] / (len(pairs) - 1) * 100, 1
+            ) if len(pairs) > 1 else 0.0
             status = "OK" if score["correct"] else "FAIL"
             print(f"  [{status}] {needle['key']} (depth {depth}%) "
                   f"expected={score['expected']!r} actual={score['actual']!r}")
@@ -473,10 +476,12 @@ def run_single_experiment(run_index, config, seed, show=None):
 # Main
 # ---------------------------------------------------------------------------
 
-CSV_COLUMNS = ["run", "haystack_size", "depth_pct", "correct", "expected", "actual"]
+CSV_COLUMNS: list[str] = [
+    "run", "haystack_size", "depth_pct", "correct", "expected", "actual",
+]
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Homogeneous Needle-in-a-Haystack benchmark"
     )
@@ -499,9 +504,9 @@ def main():
                         help="Fraction of needles that are distractors (default: 0.08)")
     parser.add_argument("--temperature", type=float, default=0.0,
                         help="Sampling temperature (default: 0.0)")
-    parser.add_argument("--max-tokens", type=int, default=240000,
+    parser.add_argument("--max-tokens", type=int, default=8192,
                         help="Max tokens per response (default: 8192)")
-    parser.add_argument("--timeout", type=int, default=1800,
+    parser.add_argument("--timeout", type=int, default=300,
                         help="Request timeout in seconds (default: 300)")
     parser.add_argument("--show", choices=["prompt", "response", "all"],
                         help="Print prompt/response for debugging (prompt=response/all)")
@@ -517,7 +522,7 @@ def main():
                         help="Output CSV path (default: results.csv)")
 
     args = parser.parse_args()
-    config = {
+    config: Config = {
         "endpoint": args.endpoint,
         "model": args.model,
         "key_len": args.key_len,
@@ -541,7 +546,7 @@ def main():
     print(f"Output: {args.output}")
     print()
 
-    all_rows = []
+    all_rows: list[dict[str, Any]] = []
     for run_idx in range(args.repeat):
         print(f"Run {run_idx + 1}/{args.repeat}...", end=" ", flush=True)
         try:
@@ -555,7 +560,6 @@ def main():
         except Exception as e:
             print(f"FAILED: {e}", file=sys.stderr)
 
-    # Write CSV
     with open(args.output, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
         writer.writeheader()
@@ -563,7 +567,6 @@ def main():
 
     print(f"\nWrote {len(all_rows)} rows to {args.output}")
 
-    # Summary
     total = len(all_rows)
     correct = sum(1 for r in all_rows if r["correct"] == 1)
     if total > 0:
