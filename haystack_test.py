@@ -499,9 +499,9 @@ def main():
                         help="Fraction of needles that are distractors (default: 0.08)")
     parser.add_argument("--temperature", type=float, default=0.0,
                         help="Sampling temperature (default: 0.0)")
-    parser.add_argument("--max-tokens", type=int, default=8192,
+    parser.add_argument("--max-tokens", type=int, default=240000,
                         help="Max tokens per response (default: 8192)")
-    parser.add_argument("--timeout", type=int, default=300,
+    parser.add_argument("--timeout", type=int, default=1800,
                         help="Request timeout in seconds (default: 300)")
     parser.add_argument("--show", choices=["prompt", "response", "all"],
                         help="Print prompt/response for debugging (prompt=response/all)")
