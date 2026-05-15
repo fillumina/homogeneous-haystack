@@ -1,6 +1,6 @@
 import pytest
 
-from haystack_test import pick_needle_positions, select_needles
+from haystack_test import Needle, pick_needle_positions, select_needles
 
 
 class TestPickNeedlePositions:
@@ -59,66 +59,73 @@ class TestSelectNeedles:
         assert len(result) == 20
 
     def test_real_needles_count(self, haystack_pairs):
-        """Default distractor_pct=0.08 means 92% are real."""
+        """select_needles returns all needles as real needles now."""
         _, pairs = haystack_pairs
-        result = select_needles(pairs, 25, distractor_pct=0.08)
-        real = [n for n in result if not n["is_distractor"]]
-        expected_real = int(25 * (1 - 0.08))
-        assert len(real) == expected_real
+        result = select_needles(pairs, 25)
+        assert len(result) == 25
+        for n in result:
+            assert n.is_distractor is False
 
-    def test_distractor_needles_count(self, haystack_pairs):
+    def test_distractor_needles_separate(self, haystack_pairs):
+        """Distractors are created by create_distractor_keys, not select_needles."""
+        from haystack_test import create_distractor_keys
         _, pairs = haystack_pairs
-        result = select_needles(pairs, 25, distractor_pct=0.2)
-        distractors = [n for n in result if n["is_distractor"]]
-        expected_distractors = 25 - int(25 * (1 - 0.2))
-        assert len(distractors) == expected_distractors
+        real = select_needles(pairs, 20)
+        distractors = create_distractor_keys(pairs, 5, 20, 8)
+        assert len(real) == 20
+        assert len(distractors) == 5
+        for n in real:
+            assert n.is_distractor is False
+        for n in distractors:
+            assert n.is_distractor is True
 
     def test_real_needles_have_expected_values(self, haystack_pairs):
         _, pairs = haystack_pairs
         result = select_needles(pairs, 10, distractor_pct=0.0)
         for needle in result:
-            assert needle["expected"] is not None
-            assert isinstance(needle["expected"], int)
-            assert needle["is_distractor"] is False
+            assert needle.expected is not None
+            assert isinstance(needle.expected, int)
+            assert needle.is_distractor is False
 
     def test_distractor_needles_have_none_expected(self, haystack_pairs):
         _, pairs = haystack_pairs
         result = select_needles(pairs, 10, distractor_pct=0.3)
-        distractors = [n for n in result if n["is_distractor"]]
+        distractors = [n for n in result if n.is_distractor]
         for needle in distractors:
-            assert needle["expected"] is None
-            assert needle["is_distractor"] is True
+            assert needle.expected is None
+            assert needle.is_distractor is True
 
     def test_needles_sorted_by_index(self, haystack_pairs):
         _, pairs = haystack_pairs
         result = select_needles(pairs, 20)
-        indices = [n["index"] for n in result]
+        indices = [n.index for n in result]
         assert indices == sorted(indices)
 
     def test_indices_in_valid_range(self, haystack_pairs):
         _, pairs = haystack_pairs
         result = select_needles(pairs, 20)
         for needle in result:
-            assert 0 <= needle["index"] < len(pairs)
+            assert 0 <= needle.index < len(pairs)
 
     def test_distractor_keys_not_in_haystack(self, haystack_pairs, haystack_keys):
+        from haystack_test import create_distractor_keys
         _, pairs = haystack_pairs
-        result = select_needles(pairs, 20, distractor_pct=0.3, haystack_keys=haystack_keys)
-        distractors = [n for n in result if n["is_distractor"]]
+        distractors = create_distractor_keys(pairs, 5, 20, 8)
         for needle in distractors:
-            assert needle["key"] not in haystack_keys
+            assert needle.key not in haystack_keys
 
     def test_real_needles_keys_in_haystack(self, haystack_pairs, haystack_keys):
         _, pairs = haystack_pairs
-        result = select_needles(pairs, 20, distractor_pct=0.0, haystack_keys=haystack_keys)
+        result = select_needles(pairs, 20)
         for needle in result:
-            assert needle["key"] in haystack_keys
+            assert needle.key in haystack_keys
 
     def test_all_needles_have_required_fields(self, haystack_pairs):
         _, pairs = haystack_pairs
         result = select_needles(pairs, 10)
         for needle in result:
-            assert "index" in needle
-            assert "key" in needle
-            assert "expected" in needle
-            assert "is_distractor" in needle
+            assert isinstance(needle, Needle)
+            assert hasattr(needle, "index")
+            assert hasattr(needle, "key")
+            assert hasattr(needle, "expected")
+            assert hasattr(needle, "is_distractor")

@@ -21,17 +21,47 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from typing import Any
+from dataclasses import dataclass
 
 # ---------------------------------------------------------------------------
 # Types
 # ---------------------------------------------------------------------------
 
 HaystackPair = tuple[str, int]
-Needle = dict[str, Any]
 Message = dict[str, str]
-Config = dict[str, Any]
-ScoredNeedle = dict[str, Any]
+
+
+@dataclass
+class Needle:
+    index: int
+    key: str
+    expected: int | None
+    is_distractor: bool
+
+
+@dataclass
+class Config:
+    endpoint: str
+    model: str | None
+    key_len: int
+    val_min: int
+    val_max: int
+    haystack_n: int
+    num_needles: int
+    distractor_pct: float
+    temperature: float
+    max_tokens: int
+    timeout: int
+    single: bool
+    full: bool
+
+
+@dataclass
+class ScoredNeedle:
+    needle_key: str
+    expected: int | str
+    actual: str
+    correct: int
 
 
 # ---------------------------------------------------------------------------
@@ -110,12 +140,12 @@ def create_distractor_keys(
     # crete the distractors using the remaining indexes of the positions
     idx = starting_index
     for key in distractor_keys:
-        distractor_needles.append({
-            "index": idx,
-            "key": key,
-            "expected": None,
-            "is_distractor": True,
-        })
+        distractor_needles.append(Needle(
+            index=idx,
+            key=key,
+            expected=None,
+            is_distractor=True,
+        ))
         idx = idx + 1
 
     return distractor_needles
@@ -137,12 +167,12 @@ def select_needles(
     real_needles: list[Needle] = []
     for idx in positions:
         key, value = pairs[idx]
-        real_needles.append({
-            "index": idx,
-            "key": key,
-            "expected": value,
-            "is_distractor": False,
-        })
+        real_needles.append(Needle(
+            index=idx,
+            key=key,
+            expected=value,
+            is_distractor=False,
+        ))
     return real_needles
 
 
@@ -164,7 +194,7 @@ def build_prompt(haystack_text: str, needles: list[Needle]) -> list[Message]:
         "Now answer for each key. Use the format KEY=VALUE on each line:",
     ]
     for needle in needles:
-        lines.append(f"What is the value for {needle['key']}?")
+        lines.append(f"What is the value for {needle.key}?")
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": "\n".join(lines)},
@@ -299,19 +329,19 @@ def score_needles(needles: list[Needle], parsed: dict[str, str]) -> list[ScoredN
     """Score each needle against parsed responses."""
     results: list[ScoredNeedle] = []
     for needle in needles:
-        key = needle["key"]
-        expected = needle["expected"]
+        key = needle.key
+        expected = needle.expected
         actual = parsed.get(key, "")
         if expected is not None:
             correct = 1 if actual == str(expected) else 0
         else:
             correct = 1 if actual == "" else 0
-        results.append({
-            "needle_key": key,
-            "expected": expected if expected is not None else "",
-            "actual": actual,
-            "correct": correct,
-        })
+        results.append(ScoredNeedle(
+            needle_key=key,
+            expected=expected if expected is not None else "",
+            actual=actual,
+            correct=correct,
+        ))
     return results
 
 
@@ -334,39 +364,39 @@ def run_single_experiment(
 ) -> tuple[list[dict[str, Any]], str]:
     """Run one complete experiment: generate, query, score, return rows."""
     random.seed(seed)
-    is_full: bool = config.get("full", False)
+    is_full: bool = config.full
     all_interactions: list[dict[str, Any]] = []
 
     haystack_text, pairs = build_haystack(
-        config["haystack_n"],
-        config["key_len"],
-        config["val_min"],
-        config["val_max"],
+        config.haystack_n,
+        config.key_len,
+        config.val_min,
+        config.val_max,
     )
 
     # needles extracted from the pairs at fixed intervals
     real_needles = select_needles(
         pairs,
-        config["num_needles"],
-        config["distractor_pct"]
+        config.num_needles,
+        config.distractor_pct
     )
 
     # needles that are not in the given pairs
     distractor_needles = create_distractor_keys(
         pairs,
-        int(config["num_needles"] * config["distractor_pct"]),
-        config["num_needles"],
-        config["key_len"])
+        int(config.num_needles * config.distractor_pct),
+        config.num_needles,
+        config.key_len)
 
 
     # all_needles contains n_needles + 8% of distractors
     needles = real_needles + distractor_needles
 
     # randomize the order of all_needles
-    random.shuffle(needles)
+    #random.shuffle(needles)
 
 
-    is_single: bool = config.get("single", False)
+    is_single: bool = config.single
     raw_response: dict[str, Any] | None = None
     model_name: str = "unknown"
     latency_ms = 0
@@ -375,15 +405,15 @@ def run_single_experiment(
         all_results: list[dict[str, Any]] = []
         all_interactions = []
         for needle in needles:
-            messages = build_single_needle_prompt(haystack_text, needle["key"])
+            messages = build_single_needle_prompt(haystack_text, needle.key)
             try:
                 response, latency_ms = query_llama(
-                    config["endpoint"],
+                    config.endpoint,
                     messages,
-                    model=config.get("model"),
-                    temperature=config["temperature"],
-                    max_tokens=config["max_tokens"],
-                    timeout=config.get("timeout", 300),
+                    model=config.model,
+                    temperature=config.temperature,
+                    max_tokens=config.max_tokens,
+                    timeout=config.timeout,
                 )
                 raw_response = response
                 if model_name == "unknown":
@@ -422,15 +452,15 @@ def run_single_experiment(
         response_text = "\n".join(r["content"] for r in all_results)
     else:
         messages = build_prompt(haystack_text, needles)
-        needle_keys: set[str] = {n["key"] for n in needles}
+        needle_keys: set[str] = {n.key for n in needles}
         try:
             response, latency_ms = query_llama(
-                config["endpoint"],
+                config.endpoint,
                 messages,
-                model=config.get("model"),
-                temperature=config["temperature"],
-                max_tokens=config["max_tokens"],
-                timeout=config.get("timeout", 300),
+                model=config.model,
+                temperature=config.temperature,
+                max_tokens=config.max_tokens,
+                timeout=config.timeout,
             )
             raw_response = response
             model_name = extract_model_name(response)
@@ -445,15 +475,15 @@ def run_single_experiment(
     rows: list[dict[str, Any]] = []
     for needle, score in zip(needles, score_needles(needles, parsed)):
         depth_pct = round(
-            needle["index"] / (len(pairs) - 1) * 100, 2
+            needle.index / (len(pairs) - 1) * 100, 2
         ) if len(pairs) > 1 else 0.0
         rows.append({
             "run": run_index,
-            "haystack_size": config["haystack_n"],
+            "haystack_size": config.haystack_n,
             "depth_pct": depth_pct,
-            "correct": score["correct"],
-            "expected": score["expected"],
-            "actual": score["actual"],
+            "correct": score.correct,
+            "expected": score.expected,
+            "actual": score.actual,
         })
 
     if show or is_full:
@@ -473,7 +503,7 @@ def run_single_experiment(
                     else:
                         print(_truncate(content, max_lines=5))
                 if show in ("response", "all") or is_full:
-                    print(f"\n--- RESPONSE (needle={interaction['needle']['key']}) ---")
+                    print(f"\n--- RESPONSE (needle={interaction['needle'].key}) ---")
                     if interaction["response"] is not None:
                         print(json.dumps(interaction["response"], indent=2, default=str))
                     else:
@@ -501,11 +531,11 @@ def run_single_experiment(
         print(f"\n--- PARSED RESULTS ---")
         for needle, score in zip(needles, score_needles(needles, parsed)):
             depth = round(
-                needle["index"] / (len(pairs) - 1) * 100, 1
+                needle.index / (len(pairs) - 1) * 100, 1
             ) if len(pairs) > 1 else 0.0
-            status = "OK" if score["correct"] else "FAIL"
-            print(f"  [{status}] {needle['key']} (depth {depth}%) "
-                  f"expected={score['expected']!r} actual={score['actual']!r}")
+            status = "OK" if score.correct else "FAIL"
+            print(f"  [{status}] {needle.key} (depth {depth}%) "
+                  f"expected={score.expected!r} actual={score.actual!r}")
         print("=" * 60)
         print()
 
@@ -562,21 +592,21 @@ def main() -> None:
                         help="Output CSV path (default: results.csv)")
 
     args = parser.parse_args()
-    config: Config = {
-        "endpoint": args.endpoint,
-        "model": args.model,
-        "key_len": args.key_len,
-        "val_min": args.val_min,
-        "val_max": args.val_max,
-        "haystack_n": args.haystack_n,
-        "num_needles": args.num_needles,
-        "distractor_pct": args.distractor_pct,
-        "temperature": args.temperature,
-        "max_tokens": args.max_tokens,
-        "timeout": args.timeout,
-        "single": args.single,
-        "full": args.full,
-    }
+    config = Config(
+        endpoint=args.endpoint,
+        model=args.model,
+        key_len=args.key_len,
+        val_min=args.val_min,
+        val_max=args.val_max,
+        haystack_n=args.haystack_n,
+        num_needles=args.num_needles,
+        distractor_pct=args.distractor_pct,
+        temperature=args.temperature,
+        max_tokens=args.max_tokens,
+        timeout=args.timeout,
+        single=args.single,
+        full=args.full,
+    )
 
     seed = args.seed if args.seed is not None else random.randint(0, 2**31)
     print(f"Seed: {seed}")

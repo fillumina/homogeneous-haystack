@@ -1,6 +1,7 @@
 import pytest
 
 from haystack_test import (
+    Needle,
     build_prompt,
     build_single_needle_prompt,
     SYSTEM_PROMPT,
@@ -9,23 +10,23 @@ from haystack_test import (
 
 class TestBuildPrompt:
     def test_returns_two_messages(self, needles):
-        haystack_text = "\n".join(f"{n['key']} = {n['expected']}" for n in needles[:5])
+        haystack_text = "\n".join(f"{n.key} = {n.expected}" for n in needles[:5])
         result = build_prompt(haystack_text, needles)
         assert isinstance(result, list)
         assert len(result) == 2
 
     def test_first_message_is_system(self, needles):
-        haystack_text = "\n".join(f"{n['key']} = {n['expected']}" for n in needles[:5])
+        haystack_text = "\n".join(f"{n.key} = {n.expected}" for n in needles[:5])
         result = build_prompt(haystack_text, needles)
         assert result[0]["role"] == "system"
 
     def test_second_message_is_user(self, needles):
-        haystack_text = "\n".join(f"{n['key']} = {n['expected']}" for n in needles[:5])
+        haystack_text = "\n".join(f"{n.key} = {n.expected}" for n in needles[:5])
         result = build_prompt(haystack_text, needles)
         assert result[1]["role"] == "user"
 
     def test_system_message_content(self, needles):
-        haystack_text = "\n".join(f"{n['key']} = {n['expected']}" for n in needles[:5])
+        haystack_text = "\n".join(f"{n.key} = {n.expected}" for n in needles[:5])
         result = build_prompt(haystack_text, needles)
         assert result[0]["content"] == SYSTEM_PROMPT
 
@@ -39,7 +40,7 @@ class TestBuildPrompt:
         result = build_prompt(haystack_text, needles)
         user_content = result[1]["content"]
         for needle in needles:
-            assert f"What is the value for {needle['key']}?" in user_content
+            assert f"What is the value for {needle.key}?" in user_content
 
     def test_query_format(self, needles):
         haystack_text = "KEY1 = 1234"
@@ -57,7 +58,7 @@ class TestBuildPrompt:
         result = build_prompt(text, needles)
         user_content = result[1]["content"]
         for needle in needles:
-            assert needle["key"] in user_content
+            assert needle.key in user_content
 
     def test_empty_needles_list(self, haystack_pairs):
         haystack_text, _ = haystack_pairs
