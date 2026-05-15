@@ -54,7 +54,18 @@ def generate_value(val_min: int = 1000, val_max: int = 9999) -> int:
 def build_haystack(
     n: int, key_len: int = 8, val_min: int = 1000, val_max: int = 9999
 ) -> tuple[str, list[HaystackPair]]:
-    """Build a list of `n` random KEY = VALUE lines."""
+    """Build a list of `n` random KEY = VALUE lines.
+
+    Args:
+    - n: number of pairs to generate
+    - key_len: length of the random keys (default: 8)
+    - val_min: minimum value (default: 1000)
+    - val_max: maximum value (default: 9999)
+
+    Returns:
+    - haystack_text: a single string containing all pairs, one per line, in the format "KEY = VALUE
+    - pairs: a list of (key, value) tuples for reference
+    """
     pairs: list[HaystackPair] = []
     for _ in range(n):
         key = generate_key(key_len)
@@ -76,19 +87,55 @@ def pick_needle_positions(n_total: int, n_needles: int) -> list[int]:
     return [int(i * step) for i in range(n_needles)]
 
 
+def create_distractor_keys(
+    pairs: list[HaystackPair],
+    n_distractor: int,
+    starting_index: int,
+    key_length: int
+) -> list[Needle]:
+    # a set that contains the all the keys of the haystack
+    haystack_keys = set(k for k, _ in pairs)
+
+    # contains the set of disctractors keys: keys not in the haystack
+    distractor_keys: set[str] = set()
+    tries = 0
+    while len(distractor_keys) < n_distractor and tries < n_distractor * 20:
+        k = generate_key(key_length)
+        if k not in haystack_keys:
+            distractor_keys.add(k)
+        tries += 1
+
+    distractor_needles: list[Needle] = []
+
+    # crete the distractors using the remaining indexes of the positions
+    idx = starting_index
+    for key in distractor_keys:
+        distractor_needles.append({
+            "index": idx,
+            "key": key,
+            "expected": None,
+            "is_distractor": True,
+        })
+        idx = idx + 1
+
+    return distractor_needles
+
+
 def select_needles(
     pairs: list[HaystackPair],
     n_needles: int,
-    distractor_pct: float = 0.08,
-    haystack_keys: set[str] | None = None,
+    distractor_pct: float = 0.08
 ) -> list[Needle]:
-    """Select needles from the haystack, mixing real and distractor keys."""
-    positions = pick_needle_positions(len(pairs), n_needles)
+    # list n_needles indexes to the pairs list taken at fixed intervals
+    positions: list[int] = pick_needle_positions(len(pairs), n_needles)
+    # the number of real needles (without distractors) to include based on the specified percentage
     n_real = int(n_needles * (1 - distractor_pct))
+    # the number of distractor needles to generate
     n_distractor = n_needles - n_real
 
+    # extract the needles from the haystack according to the indexes in positions
     real_needles: list[Needle] = []
-    for idx in positions[:n_real]:
+    for idx in positions:
         key, value = pairs[idx]
         real_needles.append({
             "index": idx,
@@ -96,30 +143,7 @@ def select_needles(
             "expected": value,
             "is_distractor": False,
         })
-
-    if haystack_keys is None:
-        haystack_keys = set(k for k, _ in pairs)
-
-    distractor_keys: set[str] = set()
-    tries = 0
-    while len(distractor_keys) < n_distractor and tries < n_distractor * 20:
-        k = generate_key(len(real_needles[0]["key"]) if real_needles else 8)
-        if k not in haystack_keys:
-            distractor_keys.add(k)
-        tries += 1
-
-    distractor_needles: list[Needle] = []
-    for idx, key in zip(positions[n_real:], distractor_keys):
-        distractor_needles.append({
-            "index": idx,
-            "key": key,
-            "expected": None,
-            "is_distractor": True,
-        })
-
-    all_needles = real_needles + distractor_needles
-    all_needles.sort(key=lambda n: n["index"])
-    return all_needles
+    return real_needles
 
 
 # ---------------------------------------------------------------------------
@@ -127,8 +151,8 @@ def select_needles(
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT: str = (
-    "You will be given a list of key-value pairs and asked to retrieve "
-    "the value for each key. Read the pairs carefully."
+    "You will be given a list of key-value pairs and later asked to retrieve "
+    "the value for some of those keys. Read the pairs carefully."
 )
 
 
@@ -167,8 +191,8 @@ def query_llama(
     messages: list[Message],
     model: str | None = None,
     temperature: float = 0.0,
-    max_tokens: int = 8192,
-    timeout: int = 300,
+    max_tokens: int = 240000,
+    timeout: int = 1200,
 ) -> tuple[dict[str, Any], float]:
     """Send a request to the llama-server OpenAI-compatible endpoint.
 
@@ -244,22 +268,24 @@ def parse_response(
         if not line:
             continue
         if "=" in line:
+            # if it answers with KEY=VALUE
             parts = line.split("=", 1)
             key = parts[0].strip()
             val = parts[1].strip()
             if key in needle_keys and val:
                 try:
-                    int(val)
+                    int(val) # check if it is an int or raise an exception
                     found[key] = val
                 except ValueError:
                     pass
-        else:
+        else: #! what it wants to do?
             try:
                 int(line)
                 implicit_values.append(line)
             except ValueError:
                 pass
 
+    #! this is really obscure
     if implicit_values:
         unfound_keys = [k for k in ordered_keys if k not in found]
         for i, val in enumerate(implicit_values):
@@ -317,19 +343,33 @@ def run_single_experiment(
         config["val_min"],
         config["val_max"],
     )
-    haystack_keys: set[str] = set(k for k, _ in pairs)
 
-    needles = select_needles(
+    # needles extracted from the pairs at fixed intervals
+    real_needles = select_needles(
         pairs,
         config["num_needles"],
-        config["distractor_pct"],
-        haystack_keys,
+        config["distractor_pct"]
     )
 
+    # needles that are not in the given pairs
+    distractor_needles = create_distractor_keys(
+        pairs,
+        int(config["num_needles"] * config["distractor_pct"]),
+        config["num_needles"],
+        config["key_len"])
+
+
+    # all_needles contains n_needles + 8% of distractors
+    needles = real_needles + distractor_needles
+
+    # randomize the order of all_needles
+    random.shuffle(needles)
+
+
     is_single: bool = config.get("single", False)
-    latency_ms: float = 0.0
     raw_response: dict[str, Any] | None = None
     model_name: str = "unknown"
+    latency_ms = 0
 
     if is_single:
         all_results: list[dict[str, Any]] = []
