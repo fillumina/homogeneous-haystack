@@ -245,6 +245,54 @@ def select_needles(
     return real_needles
 
 
+def generate_haystack_and_needles(
+    haystack_n: int,
+    num_needles: int,
+    distractor_pct: float,
+    key_len: int,
+    val_min: int,
+    val_max: int,
+) -> tuple[str, list[HaystackPair], list[Needle]]:
+    """Generate haystack text, pair list, and shuffled needles.
+
+    Args:
+        haystack_n: Total number of key-value pairs in the haystack.
+        num_needles: Total number of needles (real + distractors).
+        distractor_pct: Fraction of needles that are distractors (0.0-1.0).
+        key_len: Length of random keys in characters.
+        val_min: Minimum value for generated values.
+        val_max: Maximum value for generated values.
+
+    Returns:
+        A tuple of (haystack_text, pairs, shuffled_needles).
+
+    """
+    # Build haystack
+    haystack_text, pairs = build_haystack(
+        haystack_n, key_len, val_min, val_max
+    )
+
+    # Select real needles from haystack at fixed intervals
+    real_needles = select_needles(pairs, num_needles, distractor_pct)
+
+    # Compute number of distractors needed
+    n_distractor = num_needles - len(real_needles)
+
+    # Create distractor needles (keys not in haystack)
+    distractor_needles = create_distractor_keys(
+        pairs,
+        n_distractor,
+        len(real_needles),
+        key_len,
+    )
+
+    # Combine real and distractor needles, then shuffle
+    needles = real_needles + distractor_needles
+    random.shuffle(needles)
+
+    return haystack_text, pairs, needles
+
+
 # ---------------------------------------------------------------------------
 # Prompt building
 # ---------------------------------------------------------------------------
@@ -764,54 +812,6 @@ def validate_generation_params(config: Config) -> None:
         raise ValueError(f"key_len must be >= 1, got {config.key_len}")
     if config.val_min > config.val_max:
         raise ValueError(f"val_min ({config.val_min}) > val_max ({config.val_max})")
-
-
-def generate_haystack_and_needles(
-    haystack_n: int,
-    num_needles: int,
-    distractor_pct: float,
-    key_len: int,
-    val_min: int,
-    val_max: int,
-) -> tuple[str, list[HaystackPair], list[Needle]]:
-    """Generate haystack text, pair list, and shuffled needles.
-
-    Args:
-        haystack_n: Total number of key-value pairs in the haystack.
-        num_needles: Total number of needles (real + distractors).
-        distractor_pct: Fraction of needles that are distractors (0.0-1.0).
-        key_len: Length of random keys in characters.
-        val_min: Minimum value for generated values.
-        val_max: Maximum value for generated values.
-
-    Returns:
-        A tuple of (haystack_text, pairs, shuffled_needles).
-
-    """
-    # Build haystack
-    haystack_text, pairs = build_haystack(
-        haystack_n, key_len, val_min, val_max
-    )
-
-    # Select real needles from haystack at fixed intervals
-    real_needles = select_needles(pairs, num_needles, distractor_pct)
-
-    # Compute number of distractors needed
-    n_distractor = num_needles - len(real_needles)
-
-    # Create distractor needles (keys not in haystack)
-    distractor_needles = create_distractor_keys(
-        pairs,
-        n_distractor,
-        len(real_needles),
-        key_len,
-    )
-
-    # Combine real and distractor needles, then shuffle
-    needles = real_needles + distractor_needles
-    random.shuffle(needles)
-
-    return haystack_text, pairs, needles
 
 
 # ---------------------------------------------------------------------------
