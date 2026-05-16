@@ -557,31 +557,24 @@ def run_single_experiment(
     return rows, model_name
 
 
-def validate_generation_params(
-    haystack_n: int,
-    num_needles: int,
-    distractor_pct: float,
-    key_len: int,
-    val_min: int,
-    val_max: int,
-) -> None:
+def validate_generation_params(config: Config) -> None:
     """Validate parameters for haystack and needle generation.
 
     Raises:
         ValueError: If any parameter is invalid.
     """
-    if haystack_n < 1:
-        raise ValueError(f"haystack_n must be >= 1, got {haystack_n}")
-    if num_needles < 1:
-        raise ValueError(f"num_needles must be >= 1, got {num_needles}")
-    if not (0.0 <= distractor_pct < 1.0):
+    if config.haystack_n < 1:
+        raise ValueError(f"haystack_n must be >= 1, got {config.haystack_n}")
+    if config.num_needles < 1:
+        raise ValueError(f"num_needles must be >= 1, got {config.num_needles}")
+    if not (0.0 <= config.distractor_pct < 1.0):
         raise ValueError(
-            f"distractor_pct must be in [0.0, 1.0), got {distractor_pct}"
+            f"distractor_pct must be in [0.0, 1.0), got {config.distractor_pct}"
         )
-    if key_len < 1:
-        raise ValueError(f"key_len must be >= 1, got {key_len}")
-    if val_min > val_max:
-        raise ValueError(f"val_min ({val_min}) > val_max ({val_max})")
+    if config.key_len < 1:
+        raise ValueError(f"key_len must be >= 1, got {config.key_len}")
+    if config.val_min > config.val_max:
+        raise ValueError(f"val_min ({config.val_min}) > val_max ({config.val_max})")
 
 
 def generate_haystack_and_needles(
@@ -683,16 +676,6 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # Validate generation parameters before proceeding
-    validate_generation_params(
-        haystack_n=args.haystack_n,
-        num_needles=args.num_needles,
-        distractor_pct=args.distractor_pct,
-        key_len=args.key_len,
-        val_min=args.val_min,
-        val_max=args.val_max,
-    )
-
     config = Config(
         endpoint=args.endpoint,
         model=args.model,
@@ -708,6 +691,8 @@ def main() -> None:
         single=args.single,
         full=args.full,
     )
+
+    validate_generation_params(config)
 
     seed = args.seed if args.seed is not None else random.randint(0, 2**31)
     print(f"Seed: {seed}")
