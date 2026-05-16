@@ -15,6 +15,7 @@ import argparse
 import csv
 import json
 import random
+import secrets
 import socket
 import string
 import sys
@@ -694,7 +695,7 @@ def main() -> None:
 
     validate_generation_params(config)
 
-    seed = args.seed if args.seed is not None else random.randint(0, 2**31)
+    seed = args.seed if args.seed is not None else secrets.randbits(31)
     print(f"Seed: {seed}")
     print(f"Endpoint: {args.endpoint}")
     print(f"Haystack: {args.haystack_n} pairs, {args.num_needles} needles "
