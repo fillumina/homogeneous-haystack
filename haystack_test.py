@@ -521,6 +521,34 @@ def run_single_experiment(
 
     return rows, model_name
 
+
+def validate_generation_params(
+    haystack_n: int,
+    num_needles: int,
+    distractor_pct: float,
+    key_len: int,
+    val_min: int,
+    val_max: int,
+) -> None:
+    """Validate parameters for haystack and needle generation.
+
+    Raises:
+        ValueError: If any parameter is invalid.
+    """
+    if haystack_n < 1:
+        raise ValueError(f"haystack_n must be >= 1, got {haystack_n}")
+    if num_needles < 1:
+        raise ValueError(f"num_needles must be >= 1, got {num_needles}")
+    if not (0.0 <= distractor_pct < 1.0):
+        raise ValueError(
+            f"distractor_pct must be in [0.0, 1.0), got {distractor_pct}"
+        )
+    if key_len < 1:
+        raise ValueError(f"key_len must be >= 1, got {key_len}")
+    if val_min > val_max:
+        raise ValueError(f"val_min ({val_min}) > val_max ({val_max})")
+
+
 def generate_haystack_and_needles(
     haystack_n: int,
     num_needles: int,
@@ -542,23 +570,7 @@ def generate_haystack_and_needles(
     Returns:
         A tuple of (haystack_text, pairs, shuffled_needles).
 
-    Raises:
-        ValueError: If parameters are invalid (e.g., negative, out of range).
     """
-    # Validate inputs
-    if haystack_n < 1:
-        raise ValueError(f"haystack_n must be >= 1, got {haystack_n}")
-    if num_needles < 1:
-        raise ValueError(f"num_needles must be >= 1, got {num_needles}")
-    if not (0.0 <= distractor_pct < 1.0):
-        raise ValueError(
-            f"distractor_pct must be in [0.0, 1.0), got {distractor_pct}"
-        )
-    if key_len < 1:
-        raise ValueError(f"key_len must be >= 1, got {key_len}")
-    if val_min > val_max:
-        raise ValueError(f"val_min ({val_min}) > val_max ({val_max})")
-
     # Build haystack
     haystack_text, pairs = build_haystack(
         haystack_n, key_len, val_min, val_max
@@ -635,6 +647,17 @@ def main() -> None:
                         help="Output CSV path (default: results.csv)")
 
     args = parser.parse_args()
+
+    # Validate generation parameters before proceeding
+    validate_generation_params(
+        haystack_n=args.haystack_n,
+        num_needles=args.num_needles,
+        distractor_pct=args.distractor_pct,
+        key_len=args.key_len,
+        val_min=args.val_min,
+        val_max=args.val_max,
+    )
+
     config = Config(
         endpoint=args.endpoint,
         model=args.model,
