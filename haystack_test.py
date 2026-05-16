@@ -22,7 +22,8 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from typing import TypedDict
 
 # ---------------------------------------------------------------------------
 # Types
@@ -30,6 +31,52 @@ from dataclasses import dataclass
 
 HaystackPair = tuple[str, int]
 Message = dict[str, str]
+
+
+class ChatCompletionChoiceMessage(TypedDict):
+    content: str
+
+
+class ChatCompletionChoice(TypedDict):
+    message: ChatCompletionChoiceMessage
+
+
+class ApiErrorResponse(TypedDict, total=False):
+    error: dict[str, str]
+
+
+class ApiSuccessResponse(TypedDict, total=False):
+    model: str
+    choices: list[ChatCompletionChoice]
+
+
+ApiResponseBody = ApiSuccessResponse | ApiErrorResponse
+
+
+class Payload(TypedDict):
+    model: str
+    messages: list[Message]
+    temperature: float
+    max_tokens: int
+    stream: bool
+
+
+@dataclass(frozen=True)
+class Interaction:
+    messages: list[Message]
+    response: ApiResponseBody | None
+    content: str
+    needle: Needle
+
+
+@dataclass(frozen=True)
+class ResultRow:
+    run: int
+    haystack_size: int
+    depth_pct: float
+    correct: int
+    expected: int | str
+    actual: str
 
 
 @dataclass
@@ -224,13 +271,13 @@ def query_llama(
     temperature: float = 0.0,
     max_tokens: int = 240000,
     timeout: int = 1200,
-) -> tuple[dict[str, Any], float]:
+) -> tuple[ApiResponseBody, float]:
     """Send a request to the llama-server OpenAI-compatible endpoint.
 
     Returns (response_json, latency_ms).
     Raises HaystackQueryError on HTTP errors or timeouts.
     """
-    payload: dict[str, Any] = {
+    payload: Payload = {
         "model": model or "local",
         "messages": messages,
         "temperature": temperature,
@@ -267,7 +314,7 @@ class HaystackQueryError(Exception):
     pass
 
 
-def extract_model_name(response: dict[str, Any]) -> str:
+def extract_model_name(response: ApiResponseBody) -> str:
     """Extract model name from OpenAI-compatible API response."""
     return response.get("model", "unknown")
 
@@ -344,13 +391,13 @@ def _query_single_needles(
     config: Config,
     haystack_text: str,
     needles: list[Needle],
-) -> tuple[dict[str, str], list[dict[str, Any]], dict[str, Any] | None, str]:
+) -> tuple[dict[str, str], list[Interaction], ApiResponseBody | None, str]:
     """Query the model one needle at a time.
 
     Returns (parsed, interactions, raw_response, response_text).
     """
-    interactions: list[dict[str, Any]] = []
-    raw_response: dict[str, Any] | None = None
+    interactions: list[Interaction] = []
+    raw_response: ApiResponseBody | None = None
 
     for needle in needles:
         messages = build_single_needle_prompt(haystack_text, needle.key)
@@ -366,18 +413,18 @@ def _query_single_needles(
             raw_response = response
             content = response["choices"][0]["message"].get("content", "")
         except HaystackQueryError as e:
-            response = None
+            response = None  # type: ignore[assignment]
             content = str(e)
 
-        interactions.append({
-            "messages": messages,
-            "response": response,
-            "content": content,
-            "needle": needle,
-        })
+        interactions.append(Interaction(
+            messages=messages,
+            response=response,
+            content=content,
+            needle=needle,
+        ))
 
-    parsed = {n.key: inter["content"] for n, inter in zip(needles, interactions)}
-    response_text = "\n".join(inter["content"] for inter in interactions)
+    parsed = {n.key: inter.content for n, inter in zip(needles, interactions)}
+    response_text = "\n".join(inter.content for inter in interactions)
     return parsed, interactions, raw_response, response_text
 
 
@@ -385,7 +432,7 @@ def _query_batch(
     config: Config,
     haystack_text: str,
     needles: list[Needle],
-) -> tuple[dict[str, str], list[Message], str, dict[str, Any] | None, str]:
+) -> tuple[dict[str, str], list[Message], str, ApiResponseBody | None, str]:
     """Query the model with all needles in a single prompt.
 
     Returns (parsed, messages, response_text, raw_response, model_name).
@@ -419,21 +466,21 @@ def _build_rows(
     needles: list[Needle],
     pairs: list[HaystackPair],
     parsed: dict[str, str],
-) -> list[dict[str, Any]]:
+) -> list[ResultRow]:
     """Build result rows from scored needles."""
-    rows: list[dict[str, Any]] = []
+    rows: list[ResultRow] = []
     for needle, score in zip(needles, score_needles(needles, parsed)):
         depth_pct = round(
             needle.index / (len(pairs) - 1) * 100, 2
         ) if len(pairs) > 1 else 0.0
-        rows.append({
-            "run": run_index,
-            "haystack_size": len(pairs),
-            "depth_pct": depth_pct,
-            "correct": score.correct,
-            "expected": score.expected,
-            "actual": score.actual,
-        })
+        rows.append(ResultRow(
+            run=run_index,
+            haystack_size=len(pairs),
+            depth_pct=depth_pct,
+            correct=score.correct,
+            expected=score.expected,
+            actual=score.actual,
+        ))
     return rows
 
 
@@ -447,9 +494,9 @@ def _print_results(
     show: str | None = None,
     is_full: bool,
     is_single: bool = False,
-    interactions: list[dict[str, Any]] | None = None,
+    interactions: list[Interaction] | None = None,
     messages: list[Message] | None = None,
-    raw_response: dict[str, Any] | None = None,
+    raw_response: ApiResponseBody | None = None,
     response_text: str = "",
 ) -> None:
     """Print experiment results and optional debug output."""
@@ -462,16 +509,16 @@ def _print_results(
     if is_single and interactions is not None and (show in ("prompt", "all") or is_full):
         for idx, inter in enumerate(interactions):
             print(f"\n--- INTERACTION {idx + 1}/{len(interactions)} ---")
-            for i, msg in enumerate(inter["messages"]):
+            for i, msg in enumerate(inter.messages):
                 _print_message(msg, is_full)
             if show in ("response", "all") or is_full:
-                print(f"\n--- RESPONSE (needle={inter['needle'].key}) ---")
-                if inter["response"] is not None:
-                    print(json.dumps(inter["response"], indent=2, default=str))
+                print(f"\n--- RESPONSE (needle={inter.needle.key}) ---")
+                if inter.response is not None:
+                    print(json.dumps(inter.response, indent=2, default=str))
                 else:
                     print("(no response)")
                 print(f"--- Parsed answer ---")
-                print(repr(inter["content"]))
+                print(repr(inter.content))
 
     # --- Batch-mode messages ---
     elif messages is not None and (show in ("prompt", "all") or is_full):
@@ -515,7 +562,7 @@ def _print_message(msg: Message, is_full: bool) -> None:
 
 def run_single_experiment(
     run_index: int, config: Config, seed: int, show: str | None = None
-) -> tuple[list[dict[str, Any]], str]:
+) -> tuple[list[ResultRow], str]:
     """Run one complete experiment: generate, query, score, return rows."""
     random.seed(seed)
     is_full = config.full
@@ -530,7 +577,7 @@ def run_single_experiment(
         val_max=config.val_max,
     )
 
-    interactions: list[dict[str, Any]] | None = None
+    interactions: list[Interaction] | None = None
     messages: list[Message] | None = None
 
     if is_single:
@@ -703,14 +750,14 @@ def main() -> None:
     print(f"Output: {args.output}")
     print()
 
-    all_rows: list[dict[str, Any]] = []
+    all_rows: list[ResultRow] = []
     for run_idx in range(args.repeat):
         print(f"Run {run_idx + 1}/{args.repeat}...", end=" ", flush=True)
         try:
             run_seed = seed + run_idx
             rows, model_name = run_single_experiment(run_idx, config, run_seed, show=args.show)
             all_rows.extend(rows)
-            correct_count = sum(1 for r in rows if r["correct"] == 1)
+            correct_count = sum(1 for r in rows if r.correct == 1)
             print(f"model={model_name}, "
                   f"accuracy={correct_count}/{len(rows)} "
                   f"({100*correct_count/len(rows):.1f}%)")
@@ -720,12 +767,12 @@ def main() -> None:
     with open(args.output, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
         writer.writeheader()
-        writer.writerows(all_rows)
+        writer.writerows(asdict(r) for r in all_rows)
 
     print(f"\nWrote {len(all_rows)} rows to {args.output}")
 
     total = len(all_rows)
-    correct = sum(1 for r in all_rows if r["correct"] == 1)
+    correct = sum(1 for r in all_rows if r.correct == 1)
     if total > 0:
         print(f"Overall accuracy: {correct}/{total} ({100*correct/total:.1f}%)")
     else:
