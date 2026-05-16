@@ -889,11 +889,12 @@ def run_single_experiment(
         total_latency = latency_ms
         total_completion = usage["completion_tokens"] if usage else 0
 
-    stats: dict[str, int | float | None] = {
+    stats: dict[str, int | float | str | None] = {
         "total_tokens": total_tokens,
         "total_latency_ms": total_latency,
         "error": error,
         "truncated": truncated,
+        "model_name": model_name,
     }
     if total_latency > 0:
         stats["tokens_per_sec"] = round(total_completion / (total_latency / 1000), 1)
@@ -1072,15 +1073,79 @@ def main() -> None:
         writer.writeheader()
         writer.writerows(asdict(r) for r in all_rows)
 
-    print(f"\nWrote {len(all_rows)} rows to {args.output}")
+    _print_summary(
+        config=config,
+        seed=seed,
+        all_rows=all_rows,
+        all_stats=all_stats,
+        timed_out_runs=timed_out_runs,
+        truncated_runs=truncated_runs,
+        output_file=args.output,
+        repeat=args.repeat,
+    )
 
-    if timed_out_runs:
-        print(f"Timed out on runs: {timed_out_runs}")
-    if truncated_runs:
-        print(f"Output truncated on runs: {truncated_runs}")
-        print("(completion_tokens reached max_tokens — model was cut off mid-response)")
-        print("Increase --max-tokens to allow the model to finish all queries")
 
+def _print_summary(
+    config: Config,
+    seed: int,
+    all_rows: list[ResultRow],
+    all_stats: list[dict[str, int | float | None]],
+    timed_out_runs: list[int],
+    truncated_runs: list[int],
+    output_file: str,
+    repeat: int = 1,
+) -> None:
+    """Print a comprehensive summary of the experiment.
+
+    Args:
+        config: Benchmark configuration used.
+        seed: Random seed used for reproducibility.
+        all_rows: All result rows from all runs.
+        all_stats: Per-run statistics.
+        timed_out_runs: List of run indices that timed out.
+        truncated_runs: List of run indices that were truncated.
+        output_file: Path to the output CSV file.
+        repeat: Number of independent runs.
+    """
+    print()
+    print("=" * 60)
+    print("SUMMARY")
+    print("=" * 60)
+
+    # Configuration
+    print("\nConfiguration:")
+    print(f"  Haystack size:     {config.haystack_n}")
+    print(f"  Num needles:       {config.num_needles}")
+    print(f"  Distractor pct:    {config.distractor_pct * 100:.1f}%")
+    print(f"  Key length:        {config.key_len}")
+    print(f"  Value range:       {config.val_min} - {config.val_max}")
+    print(f"  Temperature:       {config.temperature}")
+    print(f"  Max tokens:        {config.max_tokens}")
+    print(f"  Timeout:           {config.timeout}s")
+    print(f"  Seed:              {seed}")
+    print(f"  Repeat:            {repeat}")
+
+    # Per-run results
+    if all_stats:
+        print("\nPer-run results:")
+        for i, stats in enumerate(all_stats):
+            model_name = stats.get("model_name", "N/A") or "N/A"
+            total_tokens = stats.get("total_tokens", 0) or 0
+            avg_lat = stats.get("avg_latency_ms", 0) or 0
+            tps = stats.get("tokens_per_sec", 0)
+            error = stats.get("error")
+            truncated = stats.get("truncated")
+
+            if error:
+                print(f"  Run {i + 1}: model={model_name}, ERROR - {error}")
+            elif truncated:
+                print(f"  Run {i + 1}: model={model_name}, OUTPUT TRUNCATED")
+            else:
+                print(f"  Run {i + 1}: model={model_name}, "
+                      f"tokens={total_tokens}, avg_lat={avg_lat:.0f}ms"
+                      + (f", tps={tps:.1f}" if tps else ""))
+
+    # Overall results
     total = len(all_rows)
     correct = sum(1 for r in all_rows if r.correct == 1)
     if total > 0:
@@ -1091,12 +1156,25 @@ def main() -> None:
             for s in all_stats
             if s["total_latency_ms"]
         )
-        print(f"Overall accuracy: {correct}/{total} ({100*correct/total:.1f}%)")
-        print(f"Total tokens: {total_tokens}, "
-              f"total latency: {total_latency:.0f}ms, "
-              + (f"avg t/s: {total_completion/(total_latency/1000):.1f}" if total_latency > 0 else ""))
-    else:
-        print("No results collected.")
+        print("\nOverall results:")
+        print(f"  Accuracy:            {correct}/{total} ({100*correct/total:.1f}%)")
+        print(f"  Total tokens:        {total_tokens}")
+        print(f"  Total latency:       {total_latency:.0f}ms"
+              + (f" ({total_latency/60000:.1f} min)" if total_latency > 60000 else ""))
+        if total_latency > 0:
+            print(f"  Avg tokens/sec:      {total_completion/(total_latency/1000):.1f}")
+
+    # Issues
+    if timed_out_runs or truncated_runs:
+        print("\nIssues:")
+        if timed_out_runs:
+            print(f"  Timed out runs:    {timed_out_runs}")
+        if truncated_runs:
+            print(f"  Truncated runs:    {truncated_runs}")
+            print("  (completion_tokens reached max_tokens — model was cut off)")
+
+    print(f"\nOutput: {output_file}")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
