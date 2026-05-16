@@ -229,8 +229,7 @@ def select_needles(
 
     Args:
         pairs: List of all haystack key-value pairs.
-        n_needles: Total number of needles (real + distractors) to select.
-        distractor_pct: Fraction of total that will be distractors.
+        n_needles: Number of needles to extract from the haystack.
 
     Returns:
         List of Needle objects extracted from the haystack positions.
