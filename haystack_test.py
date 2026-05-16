@@ -45,7 +45,7 @@ class ApiErrorResponse(TypedDict, total=False):
     error: dict[str, str]
 
 
-class ApiSuccessResponse(TypedDict, total=False):
+class ApiSuccessResponse(TypedDict):
     model: str
     choices: list[ChatCompletionChoice]
 
@@ -411,7 +411,7 @@ def _query_single_needles(
                 timeout=config.timeout,
             )
             raw_response = response
-            content = response["choices"][0]["message"].get("content", "")
+            content = response["choices"][0]["message"].get("content", "")  # type: ignore[typeddict-item]
         except HaystackQueryError as e:
             response = None  # type: ignore[assignment]
             content = str(e)
@@ -451,7 +451,7 @@ def _query_batch(
         )
         raw_response = response
         model_name = extract_model_name(response)
-        response_text = response["choices"][0]["message"].get("content", "")
+        response_text = response["choices"][0]["message"].get("content", "")  # type: ignore[typeddict-item]
     except HaystackQueryError as e:
         raw_response = None
         model_name = "error"
