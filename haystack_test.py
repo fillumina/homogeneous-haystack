@@ -277,12 +277,11 @@ def generate_haystack_and_needles(
         haystack_n, key_len, val_min, val_max
     )
 
-    # Compute number of real needles and distractors
-    n_real = int(num_needles * (1 - distractor_pct))
-    n_distractor = num_needles - n_real
-
     # Select real needles from haystack at fixed intervals
-    real_needles = select_needles(pairs, n_real)
+    real_needles = select_needles(pairs, num_needles)
+
+    # Compute number of distractors needed
+    n_distractor = int(num_needles * distractor_pct)
 
     # Create distractor needles (keys not in haystack)
     distractor_needles = create_distractor_keys(
@@ -975,10 +974,10 @@ def main() -> None:
                         help="Model name (auto-detected from API if omitted)")
     parser.add_argument("--key-len", type=int, default=8, choices=range(5, 13),
                         help="Key string length, 5-12 (default: 8)")
-    parser.add_argument("--val-min", type=int, default=10000,
-                        help="Minimum value (default: 10000)")
-    parser.add_argument("--val-max", type=int, default=99999,
-                        help="Maximum value (default: 99999)")
+    parser.add_argument("--val-min", type=int, default=1000,
+                        help="Minimum value (default: 1000)")
+    parser.add_argument("--val-max", type=int, default=9999,
+                        help="Maximum value (default: 9999)")
     parser.add_argument("--haystack-n", type=int, default=5000,
                         help="Total number of pairs in haystack (default: 5000)")
     parser.add_argument("--num-needles", type=int, default=100,
@@ -988,9 +987,9 @@ def main() -> None:
     parser.add_argument("--temperature", type=float, default=0.0,
                         help="Sampling temperature (default: 0.0)")
     parser.add_argument("--max-tokens", type=int, default=240000,
-                        help="Max tokens per response (default: 240000)")
-    parser.add_argument("--timeout", type=int, default=3600,
-                        help="Request timeout in seconds (default: 3600)")
+                        help="Max tokens per response (default: 32768)")
+    parser.add_argument("--timeout", type=int, default=1800,
+                        help="Request timeout in seconds (default: 1800)")
     parser.add_argument("--show", choices=["prompt", "response", "all"],
                         help="Print prompt/response for debugging (prompt=response/all)")
     parser.add_argument("--single", action="store_true",
