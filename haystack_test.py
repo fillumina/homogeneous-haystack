@@ -1128,10 +1128,6 @@ def _print_summary(
     # Per-run results
     if all_stats:
         print("\nPer-run results:")
-        header = f"  {'Run':>4}  {'Model':<35}  {'Tokens':>8}  {'Avg Lat':>10}  {'TPS':>6}"
-        separator = "  " + "-" * (4 + 35 + 8 + 10 + 6 + 8)
-        print(header)
-        print(separator)
         for i, stats in enumerate(all_stats):
             model_name = stats.get("model_name", "N/A") or "N/A"
             total_tokens = stats.get("total_tokens", 0) or 0
@@ -1140,12 +1136,18 @@ def _print_summary(
             error = stats.get("error")
             truncated = stats.get("truncated")
 
+            print(f"  Run:       {i + 1}")
+            print(f"  Model:     {model_name}")
             if error:
-                print(f"  {i + 1:>4}  {model_name:<35}  {total_tokens:>8}  {'ERROR':>10}  {error}")
+                print(f"  Status:    ERROR ({error})")
             elif truncated:
-                print(f"  {i + 1:>4}  {model_name:<35}  {total_tokens:>8}  {'TRUNC':>10}  -")
+                print(f"  Status:    OUTPUT TRUNCATED")
             else:
-                print(f"  {i + 1:>4}  {model_name:<35}  {total_tokens:>8}  {avg_lat:>9.0f}ms  {tps:>6.1f}")
+                print(f"  Tokens:    {total_tokens}")
+                print(f"  Avg Lat:   {avg_lat:.0f}ms")
+                if tps:
+                    print(f"  TPS:       {tps:.1f}")
+            print()
 
     # Overall results
     total = len(all_rows)
