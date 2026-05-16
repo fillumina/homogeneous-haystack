@@ -527,7 +527,7 @@ def _query_single_needles(
     haystack_text: str,
     needles: list[Needle],
 ) -> tuple[dict[str, str], list[Interaction], ApiResponseBody | None, str,
-           list[float], list[ApiUsage | None]]:
+           list[float], list[ApiUsage | None], str | None]:
     """Query the model one needle at a time.
 
     Args:
@@ -537,12 +537,14 @@ def _query_single_needles(
 
     Returns:
         Tuple of (parsed results, interaction history, last raw response,
-        concatenated response text, per-query latencies, per-query usages).
+        concatenated response text, per-query latencies, per-query usages,
+        error message or None).
     """
     interactions: list[Interaction] = []
     raw_response: ApiResponseBody | None = None
     latencies: list[float] = []
     usages: list[ApiUsage | None] = []
+    error: str | None = None
 
     for needle in needles:
         messages = build_single_needle_prompt(haystack_text, needle.key)
@@ -563,6 +565,7 @@ def _query_single_needles(
             content = str(e)
             latency_ms = 0.0
             usage = None
+            error = str(e)
 
         interactions.append(Interaction(
             messages=messages,
@@ -575,7 +578,7 @@ def _query_single_needles(
 
     parsed = {n.key: inter.content for n, inter in zip(needles, interactions)}
     response_text = "\n".join(inter.content for inter in interactions)
-    return parsed, interactions, raw_response, response_text, latencies, usages
+    return parsed, interactions, raw_response, response_text, latencies, usages, error
 
 
 def _query_batch(
@@ -583,7 +586,7 @@ def _query_batch(
     haystack_text: str,
     needles: list[Needle],
 ) -> tuple[dict[str, str], list[Message], str, ApiResponseBody | None, str,
-           ApiUsage | None, float]:
+           ApiUsage | None, float, str | None]:
     """Query the model with all needles in a single prompt.
 
     Args:
@@ -593,7 +596,8 @@ def _query_batch(
 
     Returns:
         Tuple of (parsed results, prompt messages, response text,
-        raw response body, model name, usage info, latency in ms).
+        raw response body, model name, usage info, latency in ms,
+        error message or None).
     """
     messages = build_prompt(haystack_text, needles)
     needle_keys: set[str] = {n.key for n in needles}
@@ -611,15 +615,17 @@ def _query_batch(
         model_name = extract_model_name(response)
         response_text = response["choices"][0]["message"].get("content", "")  # type: ignore[typeddict-item]
         usage = response.get("usage")
+        error = None
     except HaystackQueryError as e:
         raw_response = None
         model_name = "error"
-        response_text = str(e)
+        response_text = ""
         usage = None
         latency_ms = 0.0
+        error = str(e)
 
-    parsed = parse_response(response_text, needle_keys)
-    return parsed, messages, response_text, raw_response, model_name, usage, latency_ms
+    parsed = parse_response(response_text, needle_keys) if error is None else {}
+    return parsed, messages, response_text, raw_response, model_name, usage, latency_ms, error
 
 
 def _build_rows(
@@ -774,13 +780,29 @@ def _print_results(
 
     # --- Parsed results summary ---
     print(f"\n--- PARSED RESULTS ---")
-    for needle, score in zip(needles, score_needles(needles, parsed)):
+    scored = list(score_needles(needles, parsed))
+    real_needles = []
+    distractor_needles = []
+    for needle, score in zip(needles, scored):
+        if needle.is_distractor:
+            distractor_needles.append((needle, score))
+        else:
+            real_needles.append((needle, score))
+
+    for needle, score in sorted(real_needles, key=lambda x: x[0].index):
         depth = round(
             needle.index / (len(pairs) - 1) * 100, 1
         ) if len(pairs) > 1 else 0.0
         status = "OK" if score.correct else "FAIL"
         print(f"  [{status}] {needle.key} (depth {depth}%) "
               f"expected={score.expected!r} actual={score.actual!r}")
+
+    if distractor_needles:
+        print(f"\n  --- Distractors ({len(distractor_needles)}) ---")
+        for needle, score in sorted(distractor_needles, key=lambda x: x[0].key):
+            status = "OK" if score.correct else "FAIL"
+            print(f"  [{status}] {needle.key} "
+                  f"(distractor, expected=not_found actual={score.actual!r})")
     print("=" * 60)
     print()
 
@@ -833,7 +855,7 @@ def run_single_experiment(
     messages: list[Message] | None = None
 
     if is_single:
-        parsed, interactions, raw_response, response_text, latencies, usages = (
+        parsed, interactions, raw_response, response_text, latencies, usages, error = (
             _query_single_needles(config, haystack_text, needles)
         )
         model_name = extract_model_name(raw_response) if raw_response else "error"
@@ -848,7 +870,7 @@ def run_single_experiment(
             (u["completion_tokens"] or 0) for u in usages if u
         )
     else:
-        parsed, messages, response_text, raw_response, model_name, usage, latency_ms = (
+        parsed, messages, response_text, raw_response, model_name, usage, latency_ms, error = (
             _query_batch(config, haystack_text, needles)
         )
         rows = _build_rows(
@@ -858,9 +880,10 @@ def run_single_experiment(
         total_latency = latency_ms
         total_completion = usage["completion_tokens"] if usage else 0
 
-    stats: dict[str, float | int] = {
+    stats: dict[str, float | int | None] = {
         "total_tokens": total_tokens,
         "total_latency_ms": total_latency,
+        "error": error,
     }
     if total_latency > 0:
         stats["tokens_per_sec"] = round(total_completion / (total_latency / 1000), 1)
@@ -868,7 +891,14 @@ def run_single_experiment(
         total_latency / len(needles), 1
     ) if needles else 0.0
 
-    if show or is_full:
+    if error and not is_single:
+        print()
+        print("=" * 60)
+        print(f"Run {run_index} — {error}")
+        print("=" * 60)
+        print()
+        rows = []
+    elif show or is_full:
         _print_results(
             run_index, model_name, needles, pairs, parsed,
             show=show, is_full=is_full, is_single=is_single,
@@ -942,8 +972,8 @@ def main() -> None:
                         help="Sampling temperature (default: 0.0)")
     parser.add_argument("--max-tokens", type=int, default=8192,
                         help="Max tokens per response (default: 8192)")
-    parser.add_argument("--timeout", type=int, default=300,
-                        help="Request timeout in seconds (default: 300)")
+    parser.add_argument("--timeout", type=int, default=1800,
+                        help="Request timeout in seconds (default: 1800)")
     parser.add_argument("--show", choices=["prompt", "response", "all"],
                         help="Print prompt/response for debugging (prompt=response/all)")
     parser.add_argument("--single", action="store_true",
@@ -986,7 +1016,8 @@ def main() -> None:
     print()
 
     all_rows: list[ResultRow] = []
-    all_stats: list[dict[str, float | int]] = []
+    all_stats: list[dict[str, float | int | None]] = []
+    timed_out_runs: list[int] = []
     for run_idx in range(args.repeat):
         print(f"Run {run_idx + 1}/{args.repeat}...", end=" ", flush=True)
         try:
@@ -996,15 +1027,22 @@ def main() -> None:
             )
             all_rows.extend(rows)
             all_stats.append(stats)
-            correct_count = sum(1 for r in rows if r.correct == 1)
-            tps = stats.get("tokens_per_sec", 0)
-            avg_lat = stats.get("avg_latency_ms", 0)
-            print(f"model={model_name}, "
-                  f"accuracy={correct_count}/{len(rows)} "
-                  f"({100*correct_count/len(rows):.1f}%) "
-                  f"tokens={stats['total_tokens']} "
-                  f"avg_lat={avg_lat:.0f}ms"
-                  + (f" tps={tps:.1f}" if tps else ""))
+            error = stats.get("error")
+            if error:
+                timed_out_runs.append(run_idx + 1)
+                print(f"model={model_name}, ERROR: {error}")
+            elif rows:
+                correct_count = sum(1 for r in rows if r.correct == 1)
+                tps = stats.get("tokens_per_sec", 0)
+                avg_lat = stats.get("avg_latency_ms", 0)
+                print(f"model={model_name}, "
+                      f"accuracy={correct_count}/{len(rows)} "
+                      f"({100*correct_count/len(rows):.1f}%) "
+                      f"tokens={stats['total_tokens']} "
+                      f"avg_lat={avg_lat:.0f}ms"
+                      + (f" tps={tps:.1f}" if tps else ""))
+            else:
+                print(f"model={model_name}, no results")
         except Exception as e:
             print(f"FAILED: {e}", file=sys.stderr)
 
@@ -1015,14 +1053,18 @@ def main() -> None:
 
     print(f"\nWrote {len(all_rows)} rows to {args.output}")
 
+    if timed_out_runs:
+        print(f"Timed out on runs: {timed_out_runs}")
+
     total = len(all_rows)
     correct = sum(1 for r in all_rows if r.correct == 1)
     if total > 0:
-        total_tokens = sum(s["total_tokens"] for s in all_stats)
-        total_latency = sum(s["total_latency_ms"] for s in all_stats)
+        total_tokens = sum(s["total_tokens"] for s in all_stats if s["total_tokens"])
+        total_latency = sum(s["total_latency_ms"] for s in all_stats if s["total_latency_ms"])
         total_completion = sum(
             (s.get("tokens_per_sec", 0) or 0) * (s["total_latency_ms"] / 1000)
             for s in all_stats
+            if s["total_latency_ms"]
         )
         print(f"Overall accuracy: {correct}/{total} ({100*correct/total:.1f}%)")
         print(f"Total tokens: {total_tokens}, "
