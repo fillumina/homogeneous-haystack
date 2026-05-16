@@ -45,9 +45,16 @@ class ApiErrorResponse(TypedDict, total=False):
     error: dict[str, str]
 
 
+class ApiUsage(TypedDict):
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+
+
 class ApiSuccessResponse(TypedDict):
     model: str
     choices: list[ChatCompletionChoice]
+    usage: ApiUsage
 
 
 ApiResponseBody = ApiSuccessResponse | ApiErrorResponse
@@ -77,6 +84,10 @@ class ResultRow:
     correct: int
     expected: int | str
     actual: str
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    latency_ms: float | None = None
 
 
 @dataclass
@@ -516,7 +527,8 @@ def _query_single_needles(
     config: Config,
     haystack_text: str,
     needles: list[Needle],
-) -> tuple[dict[str, str], list[Interaction], ApiResponseBody | None, str]:
+) -> tuple[dict[str, str], list[Interaction], ApiResponseBody | None, str,
+           list[float], list[ApiUsage | None]]:
     """Query the model one needle at a time.
 
     Args:
@@ -526,15 +538,17 @@ def _query_single_needles(
 
     Returns:
         Tuple of (parsed results, interaction history, last raw response,
-        concatenated response text).
+        concatenated response text, per-query latencies, per-query usages).
     """
     interactions: list[Interaction] = []
     raw_response: ApiResponseBody | None = None
+    latencies: list[float] = []
+    usages: list[ApiUsage | None] = []
 
     for needle in needles:
         messages = build_single_needle_prompt(haystack_text, needle.key)
         try:
-            response, _ = query_llama(
+            response, latency_ms = query_llama(
                 config.endpoint,
                 messages,
                 model=config.model,
@@ -544,9 +558,12 @@ def _query_single_needles(
             )
             raw_response = response
             content = response["choices"][0]["message"].get("content", "")  # type: ignore[typeddict-item]
+            usage = response.get("usage")
         except HaystackQueryError as e:
             response = None  # type: ignore[assignment]
             content = str(e)
+            latency_ms = 0.0
+            usage = None
 
         interactions.append(Interaction(
             messages=messages,
@@ -554,17 +571,20 @@ def _query_single_needles(
             content=content,
             needle=needle,
         ))
+        latencies.append(latency_ms)
+        usages.append(usage)
 
     parsed = {n.key: inter.content for n, inter in zip(needles, interactions)}
     response_text = "\n".join(inter.content for inter in interactions)
-    return parsed, interactions, raw_response, response_text
+    return parsed, interactions, raw_response, response_text, latencies, usages
 
 
 def _query_batch(
     config: Config,
     haystack_text: str,
     needles: list[Needle],
-) -> tuple[dict[str, str], list[Message], str, ApiResponseBody | None, str]:
+) -> tuple[dict[str, str], list[Message], str, ApiResponseBody | None, str,
+           ApiUsage | None, float]:
     """Query the model with all needles in a single prompt.
 
     Args:
@@ -574,13 +594,13 @@ def _query_batch(
 
     Returns:
         Tuple of (parsed results, prompt messages, response text,
-        raw response body, model name).
+        raw response body, model name, usage info, latency in ms).
     """
     messages = build_prompt(haystack_text, needles)
     needle_keys: set[str] = {n.key for n in needles}
 
     try:
-        response, _ = query_llama(
+        response, latency_ms = query_llama(
             config.endpoint,
             messages,
             model=config.model,
@@ -591,13 +611,16 @@ def _query_batch(
         raw_response = response
         model_name = extract_model_name(response)
         response_text = response["choices"][0]["message"].get("content", "")  # type: ignore[typeddict-item]
+        usage = response.get("usage")
     except HaystackQueryError as e:
         raw_response = None
         model_name = "error"
         response_text = str(e)
+        usage = None
+        latency_ms = 0.0
 
     parsed = parse_response(response_text, needle_keys)
-    return parsed, messages, response_text, raw_response, model_name
+    return parsed, messages, response_text, raw_response, model_name, usage, latency_ms
 
 
 def _build_rows(
@@ -605,6 +628,8 @@ def _build_rows(
     needles: list[Needle],
     pairs: list[HaystackPair],
     parsed: dict[str, str],
+    usage: ApiUsage | None = None,
+    latency_ms: float | None = None,
 ) -> list[ResultRow]:
     """Build result rows from scored needles.
 
@@ -613,9 +638,11 @@ def _build_rows(
         needles: List of needles that were queried.
         pairs: Full list of haystack pairs (for depth calculation).
         parsed: Parsed key -> value results from the model.
+        usage: Token usage info to attach to all rows.
+        latency_ms: Total latency to attach to all rows.
 
     Returns:
-        List of ResultRow objects with correctness and depth information.
+        List of ResultRow objects with correctness, depth, and usage info.
     """
     rows: list[ResultRow] = []
     for needle, score in zip(needles, score_needles(needles, parsed)):
@@ -629,6 +656,52 @@ def _build_rows(
             correct=score.correct,
             expected=score.expected,
             actual=score.actual,
+            prompt_tokens=usage["prompt_tokens"] if usage else None,
+            completion_tokens=usage["completion_tokens"] if usage else None,
+            total_tokens=usage["total_tokens"] if usage else None,
+            latency_ms=latency_ms,
+        ))
+    return rows
+
+
+def _build_rows_single(
+    run_index: int,
+    needles: list[Needle],
+    pairs: list[HaystackPair],
+    parsed: dict[str, str],
+    usages: list[ApiUsage | None],
+    latencies: list[float],
+) -> list[ResultRow]:
+    """Build result rows with per-query usage data (single-mode).
+
+    Args:
+        run_index: The experiment run number.
+        needles: List of needles that were queried.
+        pairs: Full list of haystack pairs (for depth calculation).
+        parsed: Parsed key -> value results from the model.
+        usages: Per-query token usage info.
+        latencies: Per-query latency info.
+
+    Returns:
+        List of ResultRow objects with per-query correctness, depth, and usage.
+    """
+    rows: list[ResultRow] = []
+    for i, (needle, score) in enumerate(zip(needles, score_needles(needles, parsed))):
+        depth_pct = round(
+            needle.index / (len(pairs) - 1) * 100, 2
+        ) if len(pairs) > 1 else 0.0
+        usage = usages[i]
+        rows.append(ResultRow(
+            run=run_index,
+            haystack_size=len(pairs),
+            depth_pct=depth_pct,
+            correct=score.correct,
+            expected=score.expected,
+            actual=score.actual,
+            prompt_tokens=usage["prompt_tokens"] if usage else None,
+            completion_tokens=usage["completion_tokens"] if usage else None,
+            total_tokens=usage["total_tokens"] if usage else None,
+            latency_ms=latencies[i] if i < len(latencies) else None,
         ))
     return rows
 
@@ -731,7 +804,7 @@ def _print_message(msg: Message, is_full: bool) -> None:
 
 def run_single_experiment(
     run_index: int, config: Config, seed: int, show: str | None = None
-) -> tuple[list[ResultRow], str]:
+) -> tuple[list[ResultRow], str, dict[str, float | int]]:
     """Run one complete experiment: generate, query, score, return rows.
 
     Args:
@@ -741,7 +814,8 @@ def run_single_experiment(
         show: Which debug output to show ("prompt", "response", "all", or None).
 
     Returns:
-        Tuple of (list of result rows, model name string).
+        Tuple of (result rows, model name, summary stats with keys:
+        total_tokens, total_latency_ms, avg_latency_ms, tokens_per_sec).
     """
     random.seed(seed)
     is_full = config.full
@@ -760,16 +834,40 @@ def run_single_experiment(
     messages: list[Message] | None = None
 
     if is_single:
-        parsed, interactions, raw_response, response_text = _query_single_needles(
-            config, haystack_text, needles
+        parsed, interactions, raw_response, response_text, latencies, usages = (
+            _query_single_needles(config, haystack_text, needles)
         )
         model_name = extract_model_name(raw_response) if raw_response else "error"
-    else:
-        parsed, messages, response_text, raw_response, model_name = _query_batch(
-            config, haystack_text, needles
+        rows = _build_rows_single(
+            run_index, needles, pairs, parsed, usages, latencies
         )
+        total_tokens = sum(
+            (u["total_tokens"] or 0) for u in usages if u
+        )
+        total_latency = sum(latencies)
+        total_completion = sum(
+            (u["completion_tokens"] or 0) for u in usages if u
+        )
+    else:
+        parsed, messages, response_text, raw_response, model_name, usage, latency_ms = (
+            _query_batch(config, haystack_text, needles)
+        )
+        rows = _build_rows(
+            run_index, needles, pairs, parsed, usage, latency_ms
+        )
+        total_tokens = usage["total_tokens"] if usage else 0
+        total_latency = latency_ms
+        total_completion = usage["completion_tokens"] if usage else 0
 
-    rows = _build_rows(run_index, needles, pairs, parsed)
+    stats: dict[str, float | int] = {
+        "total_tokens": total_tokens,
+        "total_latency_ms": total_latency,
+    }
+    if total_latency > 0:
+        stats["tokens_per_sec"] = round(total_completion / (total_latency / 1000), 1)
+    stats["avg_latency_ms"] = round(
+        total_latency / len(needles), 1
+    ) if needles else 0.0
 
     if show or is_full:
         _print_results(
@@ -781,7 +879,7 @@ def run_single_experiment(
             response_text=response_text,
         )
 
-    return rows, model_name
+    return rows, model_name, stats
 
 
 def validate_generation_params(config: Config) -> None:
@@ -888,16 +986,25 @@ def main() -> None:
     print()
 
     all_rows: list[ResultRow] = []
+    all_stats: list[dict[str, float | int]] = []
     for run_idx in range(args.repeat):
         print(f"Run {run_idx + 1}/{args.repeat}...", end=" ", flush=True)
         try:
             run_seed = seed + run_idx
-            rows, model_name = run_single_experiment(run_idx, config, run_seed, show=args.show)
+            rows, model_name, stats = run_single_experiment(
+                run_idx, config, run_seed, show=args.show
+            )
             all_rows.extend(rows)
+            all_stats.append(stats)
             correct_count = sum(1 for r in rows if r.correct == 1)
+            tps = stats.get("tokens_per_sec", 0)
+            avg_lat = stats.get("avg_latency_ms", 0)
             print(f"model={model_name}, "
                   f"accuracy={correct_count}/{len(rows)} "
-                  f"({100*correct_count/len(rows):.1f}%)")
+                  f"({100*correct_count/len(rows):.1f}%) "
+                  f"tokens={stats['total_tokens']} "
+                  f"avg_lat={avg_lat:.0f}ms"
+                  + (f" tps={tps:.1f}" if tps else ""))
         except Exception as e:
             print(f"FAILED: {e}", file=sys.stderr)
 
@@ -911,7 +1018,16 @@ def main() -> None:
     total = len(all_rows)
     correct = sum(1 for r in all_rows if r.correct == 1)
     if total > 0:
+        total_tokens = sum(s["total_tokens"] for s in all_stats)
+        total_latency = sum(s["total_latency_ms"] for s in all_stats)
+        total_completion = sum(
+            (s.get("tokens_per_sec", 0) or 0) * (s["total_latency_ms"] / 1000)
+            for s in all_stats
+        )
         print(f"Overall accuracy: {correct}/{total} ({100*correct/total:.1f}%)")
+        print(f"Total tokens: {total_tokens}, "
+              f"total latency: {total_latency:.0f}ms, "
+              + (f"avg t/s: {total_completion/(total_latency/1000):.1f}" if total_latency > 0 else ""))
     else:
         print("No results collected.")
 
