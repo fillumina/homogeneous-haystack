@@ -527,7 +527,7 @@ def _query_single_needles(
     haystack_text: str,
     needles: list[Needle],
 ) -> tuple[dict[str, str], list[Interaction], ApiResponseBody | None, str,
-           list[float], list[ApiUsage | None], str | None]:
+           list[float], list[ApiUsage | None], str | None, bool]:
     """Query the model one needle at a time.
 
     Args:
@@ -538,13 +538,14 @@ def _query_single_needles(
     Returns:
         Tuple of (parsed results, interaction history, last raw response,
         concatenated response text, per-query latencies, per-query usages,
-        error message or None).
+        error message or None, truncated flag).
     """
     interactions: list[Interaction] = []
     raw_response: ApiResponseBody | None = None
     latencies: list[float] = []
     usages: list[ApiUsage | None] = []
     error: str | None = None
+    truncated = False
 
     for needle in needles:
         messages = build_single_needle_prompt(haystack_text, needle.key)
@@ -560,6 +561,9 @@ def _query_single_needles(
             raw_response = response
             content = response["choices"][0]["message"].get("content", "")  # type: ignore[typeddict-item]
             usage = response.get("usage")
+            if (usage is not None
+                    and usage.get("completion_tokens") == config.max_tokens):
+                truncated = True
         except HaystackQueryError as e:
             response = None  # type: ignore[assignment]
             content = str(e)
@@ -578,7 +582,7 @@ def _query_single_needles(
 
     parsed = {n.key: inter.content for n, inter in zip(needles, interactions)}
     response_text = "\n".join(inter.content for inter in interactions)
-    return parsed, interactions, raw_response, response_text, latencies, usages, error
+    return parsed, interactions, raw_response, response_text, latencies, usages, error, truncated
 
 
 def _query_batch(
@@ -586,7 +590,7 @@ def _query_batch(
     haystack_text: str,
     needles: list[Needle],
 ) -> tuple[dict[str, str], list[Message], str, ApiResponseBody | None, str,
-           ApiUsage | None, float, str | None]:
+           ApiUsage | None, float, str | None, bool]:
     """Query the model with all needles in a single prompt.
 
     Args:
@@ -597,7 +601,7 @@ def _query_batch(
     Returns:
         Tuple of (parsed results, prompt messages, response text,
         raw response body, model name, usage info, latency in ms,
-        error message or None).
+        error message or None, truncated flag).
     """
     messages = build_prompt(haystack_text, needles)
     needle_keys: set[str] = {n.key for n in needles}
@@ -616,6 +620,10 @@ def _query_batch(
         response_text = response["choices"][0]["message"].get("content", "")  # type: ignore[typeddict-item]
         usage = response.get("usage")
         error = None
+        truncated = (
+            usage is not None
+            and usage.get("completion_tokens") == config.max_tokens
+        )
     except HaystackQueryError as e:
         raw_response = None
         model_name = "error"
@@ -623,9 +631,10 @@ def _query_batch(
         usage = None
         latency_ms = 0.0
         error = str(e)
+        truncated = False
 
     parsed = parse_response(response_text, needle_keys) if error is None else {}
-    return parsed, messages, response_text, raw_response, model_name, usage, latency_ms, error
+    return parsed, messages, response_text, raw_response, model_name, usage, latency_ms, error, truncated
 
 
 def _build_rows(
@@ -855,7 +864,7 @@ def run_single_experiment(
     messages: list[Message] | None = None
 
     if is_single:
-        parsed, interactions, raw_response, response_text, latencies, usages, error = (
+        parsed, interactions, raw_response, response_text, latencies, usages, error, truncated = (
             _query_single_needles(config, haystack_text, needles)
         )
         model_name = extract_model_name(raw_response) if raw_response else "error"
@@ -870,7 +879,7 @@ def run_single_experiment(
             (u["completion_tokens"] or 0) for u in usages if u
         )
     else:
-        parsed, messages, response_text, raw_response, model_name, usage, latency_ms, error = (
+        parsed, messages, response_text, raw_response, model_name, usage, latency_ms, error, truncated = (
             _query_batch(config, haystack_text, needles)
         )
         rows = _build_rows(
@@ -884,6 +893,7 @@ def run_single_experiment(
         "total_tokens": total_tokens,
         "total_latency_ms": total_latency,
         "error": error,
+        "truncated": truncated,
     }
     if total_latency > 0:
         stats["tokens_per_sec"] = round(total_completion / (total_latency / 1000), 1)
@@ -898,6 +908,12 @@ def run_single_experiment(
         print("=" * 60)
         print()
         rows = []
+    elif truncated:
+        print()
+        print("=" * 60)
+        print(f"Run {run_index} — OUTPUT TRUNCATED (completion_tokens reached max_tokens={config.max_tokens})")
+        print("=" * 60)
+        print()
     elif show or is_full:
         _print_results(
             run_index, model_name, needles, pairs, parsed,
@@ -970,8 +986,8 @@ def main() -> None:
                         help="Fraction of needles that are distractors (default: 0.08)")
     parser.add_argument("--temperature", type=float, default=0.0,
                         help="Sampling temperature (default: 0.0)")
-    parser.add_argument("--max-tokens", type=int, default=8192,
-                        help="Max tokens per response (default: 8192)")
+    parser.add_argument("--max-tokens", type=int, default=32768,
+                        help="Max tokens per response (default: 32768)")
     parser.add_argument("--timeout", type=int, default=1800,
                         help="Request timeout in seconds (default: 1800)")
     parser.add_argument("--show", choices=["prompt", "response", "all"],
@@ -1018,6 +1034,7 @@ def main() -> None:
     all_rows: list[ResultRow] = []
     all_stats: list[dict[str, float | int | None]] = []
     timed_out_runs: list[int] = []
+    truncated_runs: list[int] = []
     for run_idx in range(args.repeat):
         print(f"Run {run_idx + 1}/{args.repeat}...", end=" ", flush=True)
         try:
@@ -1028,9 +1045,13 @@ def main() -> None:
             all_rows.extend(rows)
             all_stats.append(stats)
             error = stats.get("error")
+            truncated = stats.get("truncated")
             if error:
                 timed_out_runs.append(run_idx + 1)
                 print(f"model={model_name}, ERROR: {error}")
+            elif truncated:
+                truncated_runs.append(run_idx + 1)
+                print(f"model={model_name}, OUTPUT TRUNCATED")
             elif rows:
                 correct_count = sum(1 for r in rows if r.correct == 1)
                 tps = stats.get("tokens_per_sec", 0)
@@ -1055,6 +1076,10 @@ def main() -> None:
 
     if timed_out_runs:
         print(f"Timed out on runs: {timed_out_runs}")
+    if truncated_runs:
+        print(f"Output truncated on runs: {truncated_runs}")
+        print("(completion_tokens reached max_tokens — model was cut off mid-response)")
+        print("Increase --max-tokens to allow the model to finish all queries")
 
     total = len(all_rows)
     correct = sum(1 for r in all_rows if r.correct == 1)
