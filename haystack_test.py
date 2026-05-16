@@ -834,7 +834,7 @@ def _print_message(msg: Message, is_full: bool) -> None:
 
 def run_single_experiment(
     run_index: int, config: Config, seed: int, show: str | None = None
-) -> tuple[list[ResultRow], str, dict[str, float | int]]:
+) -> tuple[list[ResultRow], str, dict[str, int | float | None]]:
     """Run one complete experiment: generate, query, score, return rows.
 
     Args:
@@ -889,7 +889,7 @@ def run_single_experiment(
         total_latency = latency_ms
         total_completion = usage["completion_tokens"] if usage else 0
 
-    stats: dict[str, float | int | None] = {
+    stats: dict[str, int | float | None] = {
         "total_tokens": total_tokens,
         "total_latency_ms": total_latency,
         "error": error,
@@ -986,7 +986,7 @@ def main() -> None:
                         help="Fraction of needles that are distractors (default: 0.08)")
     parser.add_argument("--temperature", type=float, default=0.0,
                         help="Sampling temperature (default: 0.0)")
-    parser.add_argument("--max-tokens", type=int, default=32768,
+    parser.add_argument("--max-tokens", type=int, default=240000,
                         help="Max tokens per response (default: 32768)")
     parser.add_argument("--timeout", type=int, default=1800,
                         help="Request timeout in seconds (default: 1800)")
@@ -1032,7 +1032,7 @@ def main() -> None:
     print()
 
     all_rows: list[ResultRow] = []
-    all_stats: list[dict[str, float | int | None]] = []
+    all_stats: list[dict[str, int | float | None]] = []
     timed_out_runs: list[int] = []
     truncated_runs: list[int] = []
     for run_idx in range(args.repeat):
