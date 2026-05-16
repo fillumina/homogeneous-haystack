@@ -50,7 +50,7 @@ def needles(seeded_random, haystack_pairs):
     """Generate needles from the haystack fixture."""
     _, pairs = haystack_pairs
     seeded_random(123)
-    result = select_needles(pairs, n_needles=20, distractor_pct=0.1)
+    result = select_needles(pairs, n_needles=20)
     return result
 
 

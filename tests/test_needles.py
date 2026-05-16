@@ -81,16 +81,16 @@ class TestSelectNeedles:
 
     def test_real_needles_have_expected_values(self, haystack_pairs):
         _, pairs = haystack_pairs
-        result = select_needles(pairs, 10, distractor_pct=0.0)
+        result = select_needles(pairs, 10)
         for needle in result:
             assert needle.expected is not None
             assert isinstance(needle.expected, int)
             assert needle.is_distractor is False
 
     def test_distractor_needles_have_none_expected(self, haystack_pairs):
+        from haystack_test import create_distractor_keys
         _, pairs = haystack_pairs
-        result = select_needles(pairs, 10, distractor_pct=0.3)
-        distractors = [n for n in result if n.is_distractor]
+        distractors = create_distractor_keys(pairs, 10, 20, 8)
         for needle in distractors:
             assert needle.expected is None
             assert needle.is_distractor is True
