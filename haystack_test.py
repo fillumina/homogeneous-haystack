@@ -171,6 +171,17 @@ def create_distractor_keys(
     starting_index: int,
     key_length: int
 ) -> list[Needle]:
+    """Create distractor needles with keys not present in the haystack.
+
+    Args:
+        pairs: List of haystack key-value pairs (used to avoid key collision).
+        n_distractor: Number of distractor needles to create.
+        starting_index: Starting index for distractor position assignment.
+        key_length: Length of randomly generated distractor keys.
+
+    Returns:
+        List of Needle objects with is_distractor=True and expected=None.
+    """
     # a set that contains the all the keys of the haystack
     haystack_keys = set(k for k, _ in pairs)
 
@@ -204,6 +215,16 @@ def select_needles(
     n_needles: int,
     distractor_pct: float = 0.08
 ) -> list[Needle]:
+    """Select real needles from haystack at uniformly spaced intervals.
+
+    Args:
+        pairs: List of all haystack key-value pairs.
+        n_needles: Total number of needles (real + distractors) to select.
+        distractor_pct: Fraction of total that will be distractors.
+
+    Returns:
+        List of Needle objects extracted from the haystack positions.
+    """
     # list n_needles indexes to the pairs list taken at fixed intervals
     positions: list[int] = pick_needle_positions(len(pairs), n_needles)
     # the number of real needles (without distractors) to include based on the specified percentage
@@ -235,7 +256,15 @@ SYSTEM_PROMPT: str = (
 
 
 def build_prompt(haystack_text: str, needles: list[Needle]) -> list[Message]:
-    """Build the full prompt message."""
+    """Build a batch prompt with system message and all needle queries.
+
+    Args:
+        haystack_text: The full haystack text containing key=value pairs.
+        needles: List of needles to query for.
+
+    Returns:
+        System and user messages forming the complete prompt.
+    """
     lines: list[str] = [
         haystack_text,
         "",
@@ -250,7 +279,15 @@ def build_prompt(haystack_text: str, needles: list[Needle]) -> list[Message]:
 
 
 def build_single_needle_prompt(haystack_text: str, needle_key: str) -> list[Message]:
-    """Build a prompt for a single needle query."""
+    """Build a prompt querying for a single needle's value.
+
+    Args:
+        haystack_text: The full haystack text containing key=value pairs.
+        needle_key: The key to look up in the haystack.
+
+    Returns:
+        System and user messages for the single query.
+    """
     return [
         {
             "role": "system",
@@ -274,8 +311,18 @@ def query_llama(
 ) -> tuple[ApiResponseBody, float]:
     """Send a request to the llama-server OpenAI-compatible endpoint.
 
-    Returns (response_json, latency_ms).
-    Raises HaystackQueryError on HTTP errors or timeouts.
+    Args:
+        endpoint: API URL for chat completions.
+        messages: List of conversation messages.
+        model: Model name (defaults to "local").
+        temperature: Sampling temperature.
+        max_tokens: Maximum tokens in the response.
+        timeout: Request timeout in seconds.
+
+    Returns:
+        Tuple of (API response body, latency in milliseconds).
+    Raises:
+        HaystackQueryError: On HTTP errors, timeouts, or connection failures.
     """
     payload: Payload = {
         "model": model or "local",
@@ -315,7 +362,14 @@ class HaystackQueryError(Exception):
 
 
 def extract_model_name(response: ApiResponseBody) -> str:
-    """Extract model name from OpenAI-compatible API response."""
+    """Extract model name from OpenAI-compatible API response.
+
+    Args:
+        response: The API response body.
+
+    Returns:
+        The model name, or "unknown" if not present.
+    """
     return response.get("model", "unknown")
 
 
@@ -329,7 +383,15 @@ def parse_response(
 ) -> dict[str, str]:
     """Parse the model's response into a dict mapping key -> value.
 
-    Only handles explicit KEY=VALUE lines.
+    Only handles explicit KEY=VALUE lines. Non-integer values and keys
+    not in `needle_keys` are ignored.
+
+    Args:
+        response_text: The raw text response from the model.
+        needle_keys: Set of valid keys to accept.
+
+    Returns:
+        Dictionary mapping each recognized key to its integer string value.
     """
     if not response_text:
         return {}
@@ -354,7 +416,18 @@ def parse_response(
 
 
 def score_needles(needles: list[Needle], parsed: dict[str, str]) -> list[ScoredNeedle]:
-    """Score each needle against parsed responses."""
+    """Score each needle against parsed responses.
+
+    For real needles, marks correct if actual matches expected value.
+    For distractors, marks correct if actual is empty (no hallucination).
+
+    Args:
+        needles: List of needles to score.
+        parsed: Dictionary of key -> actual value from the model.
+
+    Returns:
+        List of ScoredNeedle objects with correctness flags.
+    """
     results: list[ScoredNeedle] = []
     for needle in needles:
         key = needle.key
@@ -378,7 +451,16 @@ def score_needles(needles: list[Needle], parsed: dict[str, str]) -> list[ScoredN
 # ---------------------------------------------------------------------------
 
 def _truncate(text: str, max_lines: int = 5, prefix: str = "...") -> str:
-    """Show first and last N lines of a long text."""
+    """Show first and last N lines of a long text with ellipsis in between.
+
+    Args:
+        text: The text to truncate.
+        max_lines: Number of lines to show at start and end.
+        prefix: Text to insert between truncated sections.
+
+    Returns:
+        Truncated text, or the original if it fits within 2*max_lines.
+    """
     lines = text.split("\n")
     if len(lines) <= max_lines * 2:
         return text
@@ -394,7 +476,14 @@ def _query_single_needles(
 ) -> tuple[dict[str, str], list[Interaction], ApiResponseBody | None, str]:
     """Query the model one needle at a time.
 
-    Returns (parsed, interactions, raw_response, response_text).
+    Args:
+        config: Benchmark configuration.
+        haystack_text: The full haystack text.
+        needles: List of needles to query.
+
+    Returns:
+        Tuple of (parsed results, interaction history, last raw response,
+        concatenated response text).
     """
     interactions: list[Interaction] = []
     raw_response: ApiResponseBody | None = None
@@ -435,7 +524,14 @@ def _query_batch(
 ) -> tuple[dict[str, str], list[Message], str, ApiResponseBody | None, str]:
     """Query the model with all needles in a single prompt.
 
-    Returns (parsed, messages, response_text, raw_response, model_name).
+    Args:
+        config: Benchmark configuration.
+        haystack_text: The full haystack text.
+        needles: List of needles to query.
+
+    Returns:
+        Tuple of (parsed results, prompt messages, response text,
+        raw response body, model name).
     """
     messages = build_prompt(haystack_text, needles)
     needle_keys: set[str] = {n.key for n in needles}
@@ -467,7 +563,17 @@ def _build_rows(
     pairs: list[HaystackPair],
     parsed: dict[str, str],
 ) -> list[ResultRow]:
-    """Build result rows from scored needles."""
+    """Build result rows from scored needles.
+
+    Args:
+        run_index: The experiment run number.
+        needles: List of needles that were queried.
+        pairs: Full list of haystack pairs (for depth calculation).
+        parsed: Parsed key -> value results from the model.
+
+    Returns:
+        List of ResultRow objects with correctness and depth information.
+    """
     rows: list[ResultRow] = []
     for needle, score in zip(needles, score_needles(needles, parsed)):
         depth_pct = round(
@@ -499,7 +605,22 @@ def _print_results(
     raw_response: ApiResponseBody | None = None,
     response_text: str = "",
 ) -> None:
-    """Print experiment results and optional debug output."""
+    """Print experiment results and optional debug output.
+
+    Args:
+        run_index: The experiment run number.
+        model_name: Name of the model that was queried.
+        needles: List of needles that were queried.
+        pairs: Full list of haystack pairs.
+        parsed: Parsed key -> value results from the model.
+        show: Which debug output to show ("prompt", "response", "all", or None).
+        is_full: Whether to print full untruncated content.
+        is_single: Whether single-needle mode was used.
+        interactions: Interaction history for single-mode (optional).
+        messages: Prompt messages for batch mode (optional).
+        raw_response: Raw API response body (optional).
+        response_text: Extracted response content text.
+    """
     print()
     print("=" * 60)
     print(f"Run {run_index} — model={model_name}")
@@ -550,7 +671,12 @@ def _print_results(
 
 
 def _print_message(msg: Message, is_full: bool) -> None:
-    """Print a single message with optional truncation."""
+    """Print a single message with optional truncation.
+
+    Args:
+        msg: The message to print (has role and content keys).
+        is_full: If True, print full content; otherwise truncate to 5 lines.
+    """
     role = msg["role"]
     content = msg["content"]
     print(f"\n--- MESSAGE ({role}, {len(content)} chars) ---")
@@ -563,7 +689,17 @@ def _print_message(msg: Message, is_full: bool) -> None:
 def run_single_experiment(
     run_index: int, config: Config, seed: int, show: str | None = None
 ) -> tuple[list[ResultRow], str]:
-    """Run one complete experiment: generate, query, score, return rows."""
+    """Run one complete experiment: generate, query, score, return rows.
+
+    Args:
+        run_index: The experiment run number (for CSV output).
+        config: Benchmark configuration.
+        seed: Random seed for reproducibility.
+        show: Which debug output to show ("prompt", "response", "all", or None).
+
+    Returns:
+        Tuple of (list of result rows, model name string).
+    """
     random.seed(seed)
     is_full = config.full
     is_single = config.single
@@ -608,8 +744,13 @@ def run_single_experiment(
 def validate_generation_params(config: Config) -> None:
     """Validate parameters for haystack and needle generation.
 
+    Args:
+        config: Benchmark configuration to validate.
+
     Raises:
-        ValueError: If any parameter is invalid.
+        ValueError: If any parameter is invalid (haystack_n < 1,
+            num_needles < 1, distractor_pct out of range, key_len < 1,
+            or val_min > val_max).
     """
     if config.haystack_n < 1:
         raise ValueError(f"haystack_n must be >= 1, got {config.haystack_n}")
@@ -683,6 +824,7 @@ CSV_COLUMNS: list[str] = [
 
 
 def main() -> None:
+    """Parse CLI arguments, run experiments, and write results to CSV."""
     parser = argparse.ArgumentParser(
         description="Homogeneous Needle-in-a-Haystack benchmark"
     )
