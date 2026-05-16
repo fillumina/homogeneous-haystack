@@ -278,49 +278,29 @@ def extract_model_name(response: dict[str, Any]) -> str:
 def parse_response(
     response_text: str,
     needle_keys: set[str],
-    ordered_keys: list[str] | None = None,
 ) -> dict[str, str]:
     """Parse the model's response into a dict mapping key -> value.
 
-    Handles KEY=VALUE lines (explicit) and plain number lines (implicit,
-    assigned by position order).
+    Only handles explicit KEY=VALUE lines.
     """
     if not response_text:
         return {}
 
     found: dict[str, str] = {}
-    if ordered_keys is None:
-        ordered_keys = list(needle_keys)
-    implicit_values: list[str] = []
-
     for line in response_text.strip().split("\n"):
         line = line.strip()
         if not line:
             continue
         if "=" in line:
-            # if it answers with KEY=VALUE
             parts = line.split("=", 1)
             key = parts[0].strip()
             val = parts[1].strip()
             if key in needle_keys and val:
                 try:
-                    int(val) # check if it is an int or raise an exception
+                    int(val)
                     found[key] = val
                 except ValueError:
                     pass
-        else: #! what it wants to do?
-            try:
-                int(line)
-                implicit_values.append(line)
-            except ValueError:
-                pass
-
-    #! this is really obscure
-    if implicit_values:
-        unfound_keys = [k for k in ordered_keys if k not in found]
-        for i, val in enumerate(implicit_values):
-            if i < len(unfound_keys):
-                found[unfound_keys[i]] = val
 
     return found
 
@@ -449,8 +429,7 @@ def run_single_experiment(
             model_name = "error"
             response_text = str(e)
 
-        ordered_keys: list[str] = [n["key"] for n in needles]
-        parsed = parse_response(response_text, needle_keys, ordered_keys)
+        parsed = parse_response(response_text, needle_keys)
 
     rows: list[dict[str, Any]] = []
     for needle, score in zip(needles, score_needles(needles, parsed)):

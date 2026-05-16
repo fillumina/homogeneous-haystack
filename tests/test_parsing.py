@@ -43,23 +43,6 @@ class TestParseResponse:
         result = parse_response(text, {"ABC12345"})
         assert result == {"ABC12345": "5678"}
 
-    def test_implicit_numbers_assigned_by_order(self):
-        text = "5678\n1234\n9999"
-        keys = {"KEY1", "KEY2", "KEY3"}
-        result = parse_response(text, keys, ordered_keys=["KEY1", "KEY2", "KEY3"])
-        assert result == {"KEY1": "5678", "KEY2": "1234", "KEY3": "9999"}
-
-    def test_implicit_numbers_only_for_unfound_keys(self):
-        text = "ABC12345 = 5678\n1234"
-        result = parse_response(text, {"ABC12345", "XYZ99999"}, ordered_keys=["ABC12345", "XYZ99999"])
-        assert result == {"ABC12345": "5678", "XYZ99999": "1234"}
-
-    def test_implicit_numbers_not_assigned_for_found_keys(self):
-        text = "ABC12345 = 5678\n1234"
-        result = parse_response(text, {"ABC12345"}, ordered_keys=["ABC12345"])
-        assert result == {"ABC12345": "5678"}
-        assert len(result) == 1
-
     def test_partial_match(self):
         text = "ABC12345 = 5678"
         result = parse_response(text, {"ABC12345", "XYZ99999"})
@@ -70,19 +53,6 @@ class TestParseResponse:
         text = "ABC12345 = 5678\n\n\nXYZ99999 = 1234"
         result = parse_response(text, {"ABC12345", "XYZ99999"})
         assert result == {"ABC12345": "5678", "XYZ99999": "1234"}
-
-    def test_implicit_values_not_assigned_to_found_keys(self):
-        text = "ABC12345 = 5678\n1234"
-        result = parse_response(text, {"ABC12345", "XYZ99999"}, ordered_keys=["ABC12345", "XYZ99999"])
-        assert result["ABC12345"] == "5678"
-        assert result["XYZ99999"] == "1234"
-
-    def test_implicit_count_matches_unfound(self):
-        text = "ABC12345 = 5678\n1234"
-        result = parse_response(text, {"ABC12345", "XYZ99999", "QWE11111"}, ordered_keys=["ABC12345", "XYZ99999", "QWE11111"])
-        assert result["ABC12345"] == "5678"
-        assert result["XYZ99999"] == "1234"
-        assert "QWE11111" not in result
 
 
 class TestScoreNeedles:
