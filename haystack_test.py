@@ -212,8 +212,7 @@ def create_distractor_keys(
 
 def select_needles(
     pairs: list[HaystackPair],
-    n_needles: int,
-    distractor_pct: float = 0.08
+    n_needles: int
 ) -> list[Needle]:
     """Select real needles from haystack at uniformly spaced intervals.
 
@@ -227,10 +226,6 @@ def select_needles(
     """
     # list n_needles indexes to the pairs list taken at fixed intervals
     positions: list[int] = pick_needle_positions(len(pairs), n_needles)
-    # the number of real needles (without distractors) to include based on the specified percentage
-    n_real = int(n_needles * (1 - distractor_pct))
-    # the number of distractor needles to generate
-    n_distractor = n_needles - n_real
 
     # extract the needles from the haystack according to the indexes in positions
     real_needles: list[Needle] = []
@@ -273,10 +268,10 @@ def generate_haystack_and_needles(
     )
 
     # Select real needles from haystack at fixed intervals
-    real_needles = select_needles(pairs, num_needles, distractor_pct)
+    real_needles = select_needles(pairs, num_needles)
 
     # Compute number of distractors needed
-    n_distractor = num_needles - len(real_needles)
+    n_distractor = int(num_needles * distractor_pct)
 
     # Create distractor needles (keys not in haystack)
     distractor_needles = create_distractor_keys(
