@@ -912,6 +912,7 @@ def validate_generation_params(config: Config) -> None:
 
 CSV_COLUMNS: list[str] = [
     "run", "haystack_size", "depth_pct", "correct", "expected", "actual",
+    "prompt_tokens", "completion_tokens", "total_tokens", "latency_ms",
 ]
 
 
