@@ -339,13 +339,186 @@ def _truncate(text: str, max_lines: int = 5, prefix: str = "...") -> str:
     return f"{first}\n{prefix}\n{last}"
 
 
+def _query_single_needles(
+    config: Config,
+    haystack_text: str,
+    needles: list[Needle],
+) -> tuple[dict[str, str], list[dict[str, Any]], dict[str, Any] | None, str]:
+    """Query the model one needle at a time.
+
+    Returns (parsed, interactions, raw_response, response_text).
+    """
+    interactions: list[dict[str, Any]] = []
+    raw_response: dict[str, Any] | None = None
+
+    for needle in needles:
+        messages = build_single_needle_prompt(haystack_text, needle.key)
+        try:
+            response, _ = query_llama(
+                config.endpoint,
+                messages,
+                model=config.model,
+                temperature=config.temperature,
+                max_tokens=config.max_tokens,
+                timeout=config.timeout,
+            )
+            raw_response = response
+            content = response["choices"][0]["message"].get("content", "")
+        except HaystackQueryError as e:
+            response = None
+            content = str(e)
+
+        interactions.append({
+            "messages": messages,
+            "response": response,
+            "content": content,
+            "needle": needle,
+        })
+
+    parsed = {n.key: inter["content"] for n, inter in zip(needles, interactions)}
+    response_text = "\n".join(inter["content"] for inter in interactions)
+    return parsed, interactions, raw_response, response_text
+
+
+def _query_batch(
+    config: Config,
+    haystack_text: str,
+    needles: list[Needle],
+) -> tuple[dict[str, str], list[Message], str, dict[str, Any] | None, str]:
+    """Query the model with all needles in a single prompt.
+
+    Returns (parsed, messages, response_text, raw_response, model_name).
+    """
+    messages = build_prompt(haystack_text, needles)
+    needle_keys: set[str] = {n.key for n in needles}
+
+    try:
+        response, _ = query_llama(
+            config.endpoint,
+            messages,
+            model=config.model,
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
+            timeout=config.timeout,
+        )
+        raw_response = response
+        model_name = extract_model_name(response)
+        response_text = response["choices"][0]["message"].get("content", "")
+    except HaystackQueryError as e:
+        raw_response = None
+        model_name = "error"
+        response_text = str(e)
+
+    parsed = parse_response(response_text, needle_keys)
+    return parsed, messages, response_text, raw_response, model_name
+
+
+def _build_rows(
+    run_index: int,
+    needles: list[Needle],
+    pairs: list[HaystackPair],
+    parsed: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Build result rows from scored needles."""
+    rows: list[dict[str, Any]] = []
+    for needle, score in zip(needles, score_needles(needles, parsed)):
+        depth_pct = round(
+            needle.index / (len(pairs) - 1) * 100, 2
+        ) if len(pairs) > 1 else 0.0
+        rows.append({
+            "run": run_index,
+            "haystack_size": len(pairs),
+            "depth_pct": depth_pct,
+            "correct": score.correct,
+            "expected": score.expected,
+            "actual": score.actual,
+        })
+    return rows
+
+
+def _print_results(
+    run_index: int,
+    model_name: str,
+    needles: list[Needle],
+    pairs: list[HaystackPair],
+    parsed: dict[str, str],
+    *,
+    show: str | None = None,
+    is_full: bool,
+    is_single: bool = False,
+    interactions: list[dict[str, Any]] | None = None,
+    messages: list[Message] | None = None,
+    raw_response: dict[str, Any] | None = None,
+    response_text: str = "",
+) -> None:
+    """Print experiment results and optional debug output."""
+    print()
+    print("=" * 60)
+    print(f"Run {run_index} — model={model_name}")
+    print("=" * 60)
+
+    # --- Single-mode interactions ---
+    if is_single and interactions is not None and (show in ("prompt", "all") or is_full):
+        for idx, inter in enumerate(interactions):
+            print(f"\n--- INTERACTION {idx + 1}/{len(interactions)} ---")
+            for i, msg in enumerate(inter["messages"]):
+                _print_message(msg, is_full)
+            if show in ("response", "all") or is_full:
+                print(f"\n--- RESPONSE (needle={inter['needle'].key}) ---")
+                if inter["response"] is not None:
+                    print(json.dumps(inter["response"], indent=2, default=str))
+                else:
+                    print("(no response)")
+                print(f"--- Parsed answer ---")
+                print(repr(inter["content"]))
+
+    # --- Batch-mode messages ---
+    elif messages is not None and (show in ("prompt", "all") or is_full):
+        print(f"\n--- ALL MESSAGES ({len(messages)} messages) ---")
+        for msg in messages:
+            _print_message(msg, is_full)
+
+    # --- Batch-mode response ---
+    if not is_single and (show in ("response", "all") or is_full):
+        print(f"\n--- RAW RESPONSE (JSON) ---")
+        if raw_response is not None:
+            print(json.dumps(raw_response, indent=2, default=str))
+        else:
+            print("(no response received)")
+        print(f"\n--- CONTENT FIELD ---")
+        print(repr(response_text))
+
+    # --- Parsed results summary ---
+    print(f"\n--- PARSED RESULTS ---")
+    for needle, score in zip(needles, score_needles(needles, parsed)):
+        depth = round(
+            needle.index / (len(pairs) - 1) * 100, 1
+        ) if len(pairs) > 1 else 0.0
+        status = "OK" if score.correct else "FAIL"
+        print(f"  [{status}] {needle.key} (depth {depth}%) "
+              f"expected={score.expected!r} actual={score.actual!r}")
+    print("=" * 60)
+    print()
+
+
+def _print_message(msg: Message, is_full: bool) -> None:
+    """Print a single message with optional truncation."""
+    role = msg["role"]
+    content = msg["content"]
+    print(f"\n--- MESSAGE ({role}, {len(content)} chars) ---")
+    if is_full:
+        print(content)
+    else:
+        print(_truncate(content, max_lines=5))
+
+
 def run_single_experiment(
     run_index: int, config: Config, seed: int, show: str | None = None
 ) -> tuple[list[dict[str, Any]], str]:
     """Run one complete experiment: generate, query, score, return rows."""
     random.seed(seed)
-    is_full: bool = config.full
-    all_interactions: list[dict[str, Any]] = []
+    is_full = config.full
+    is_single = config.single
 
     haystack_text, pairs, needles = generate_haystack_and_needles(
         haystack_n=config.haystack_n,
@@ -356,147 +529,30 @@ def run_single_experiment(
         val_max=config.val_max,
     )
 
-    is_single: bool = config.single
-    raw_response: dict[str, Any] | None = None
-    model_name: str = "unknown"
-    latency_ms = 0
+    interactions: list[dict[str, Any]] | None = None
+    messages: list[Message] | None = None
 
     if is_single:
-        all_results: list[dict[str, Any]] = []
-        all_interactions = []
-        for needle in needles:
-            messages = build_single_needle_prompt(haystack_text, needle.key)
-            try:
-                response, latency_ms = query_llama(
-                    config.endpoint,
-                    messages,
-                    model=config.model,
-                    temperature=config.temperature,
-                    max_tokens=config.max_tokens,
-                    timeout=config.timeout,
-                )
-                raw_response = response
-                if model_name == "unknown":
-                    model_name = extract_model_name(response)
-                content = response["choices"][0]["message"].get("content", "")
-                val = ""
-                try:
-                    val = content.strip()
-                    int(val)
-                except ValueError:
-                    val = ""
-                all_results.append({
-                    "needle": needle,
-                    "actual": val,
-                    "content": content,
-                })
-                all_interactions.append({
-                    "messages": messages,
-                    "response": response,
-                    "content": content,
-                    "needle": needle,
-                })
-            except HaystackQueryError as e:
-                all_results.append({
-                    "needle": needle,
-                    "actual": "",
-                    "content": str(e),
-                })
-                all_interactions.append({
-                    "messages": messages,
-                    "response": None,
-                    "content": str(e),
-                    "needle": needle,
-                })
-        parsed = {r["needle"]["key"]: r["actual"] for r in all_results}
-        response_text = "\n".join(r["content"] for r in all_results)
+        parsed, interactions, raw_response, response_text = _query_single_needles(
+            config, haystack_text, needles
+        )
+        model_name = extract_model_name(raw_response) if raw_response else "error"
     else:
-        messages = build_prompt(haystack_text, needles)
-        needle_keys: set[str] = {n.key for n in needles}
-        try:
-            response, latency_ms = query_llama(
-                config.endpoint,
-                messages,
-                model=config.model,
-                temperature=config.temperature,
-                max_tokens=config.max_tokens,
-                timeout=config.timeout,
-            )
-            raw_response = response
-            model_name = extract_model_name(response)
-            response_text = response["choices"][0]["message"].get("content", "")
-        except HaystackQueryError as e:
-            model_name = "error"
-            response_text = str(e)
+        parsed, messages, response_text, raw_response, model_name = _query_batch(
+            config, haystack_text, needles
+        )
 
-        parsed = parse_response(response_text, needle_keys)
-
-    rows: list[dict[str, Any]] = []
-    for needle, score in zip(needles, score_needles(needles, parsed)):
-        depth_pct = round(
-            needle.index / (len(pairs) - 1) * 100, 2
-        ) if len(pairs) > 1 else 0.0
-        rows.append({
-            "run": run_index,
-            "haystack_size": config.haystack_n,
-            "depth_pct": depth_pct,
-            "correct": score.correct,
-            "expected": score.expected,
-            "actual": score.actual,
-        })
+    rows = _build_rows(run_index, needles, pairs, parsed)
 
     if show or is_full:
-        print()
-        print("=" * 60)
-        print(f"Run {run_index} — model={model_name}")
-        print("=" * 60)
-        if is_single and (show in ("prompt", "all") or is_full):
-            for idx, interaction in enumerate(all_interactions):
-                print(f"\n--- INTERACTION {idx + 1}/{len(all_interactions)} ---")
-                for i, msg in enumerate(interaction["messages"]):
-                    role = msg["role"]
-                    content = msg["content"]
-                    print(f"\n--- MESSAGE {i} ({role}, {len(content)} chars) ---")
-                    if is_full:
-                        print(content)
-                    else:
-                        print(_truncate(content, max_lines=5))
-                if show in ("response", "all") or is_full:
-                    print(f"\n--- RESPONSE (needle={interaction['needle'].key}) ---")
-                    if interaction["response"] is not None:
-                        print(json.dumps(interaction["response"], indent=2, default=str))
-                    else:
-                        print("(no response)")
-                    print(f"--- Parsed answer ---")
-                    print(repr(interaction["content"]))
-        elif (show in ("prompt", "all") or is_full) and not is_single:
-            print(f"\n--- ALL MESSAGES ({len(messages)} messages) ---")
-            for i, msg in enumerate(messages):
-                role = msg["role"]
-                content = msg["content"]
-                print(f"\n--- MESSAGE {i} ({role}, {len(content)} chars) ---")
-                if is_full:
-                    print(content)
-                else:
-                    print(_truncate(content, max_lines=5))
-        if not is_single and (show in ("response", "all") or is_full):
-            print(f"\n--- RAW RESPONSE (JSON) ---")
-            if raw_response is not None:
-                print(json.dumps(raw_response, indent=2, default=str))
-            else:
-                print("(no response received)")
-            print(f"\n--- CONTENT FIELD ---")
-            print(repr(response_text))
-        print(f"\n--- PARSED RESULTS ---")
-        for needle, score in zip(needles, score_needles(needles, parsed)):
-            depth = round(
-                needle.index / (len(pairs) - 1) * 100, 1
-            ) if len(pairs) > 1 else 0.0
-            status = "OK" if score.correct else "FAIL"
-            print(f"  [{status}] {needle.key} (depth {depth}%) "
-                  f"expected={score.expected!r} actual={score.actual!r}")
-        print("=" * 60)
-        print()
+        _print_results(
+            run_index, model_name, needles, pairs, parsed,
+            show=show, is_full=is_full, is_single=is_single,
+            interactions=interactions,
+            messages=messages,
+            raw_response=raw_response,
+            response_text=response_text,
+        )
 
     return rows, model_name
 
