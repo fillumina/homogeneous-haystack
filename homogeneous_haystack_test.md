@@ -1,11 +1,12 @@
 # Homogeneous Needle-in-a-Haystack Test
-## A More Rigorous Approach to Long-Context Retrieval Evaluation
+
+## A Rigorous Approach to Long-Context Retrieval Evaluation
 
 ---
 
 ## Overview
 
-This document describes a variant of the standard Needle-in-a-Haystack (NIAH) benchmark designed to measure pure positional retrieval in large language models, free from the semantic contrast bias that affects conventional implementations. It is intended as both a design rationale and a specification for implementation.
+This document describes a variant of the standard Needle-in-a-Haystack (NIAH) benchmark designed to measure pure positional retrieval in large language models, free from the semantic contrast bias that affects conventional implementations.
 
 ---
 
@@ -21,7 +22,7 @@ The result is that the standard test measures a combination of:
 
 - true positional retrieval ability
 - sensitivity to semantic contrast
-- the model's ability to detect structural anomalies
+- ability to detect structural anomalies
 
 These are conflated into a single score, making it impossible to isolate what is actually being measured.
 
@@ -58,7 +59,7 @@ The model either retrieved it or it did not. No inference, no convention, no pri
 
 ### 1. It isolates a single variable
 
-The homogeneous haystack measures exactly one thing: the ability to retrieve a specific token sequence from a specific position in a long context. All confounds — semantic contrast, structural anomaly detection, language model priors — are neutralized by construction.
+The homogeneous haystack measures exactly one thing: the ability to retrieve a specific token sequence from a specific position in a long context. All confounds such as semantic contrast, structural anomaly detection, language model priors, are neutralized by construction.
 
 ### 2. It is harder and more honest
 
@@ -70,7 +71,7 @@ In practice, models working over long documents — codebases, legal texts, tech
 
 ### 4. It eliminates the quantization confound
 
-Models running under quantization (e.g. with techniques like TurboQuant) have reduced precision in their KV cache entries. A high-contrast needle may still be retrievable under quantization because the signal strength is large enough to survive precision loss. A homogeneous needle, by contrast, has a signal strength that is indistinguishable from its neighbors, making the test more sensitive to quantization-induced degradation. This is particularly important when evaluating locally-hosted quantized models.
+Models running under quantization have reduced precision in their KV cache entries. A high-contrast needle may still be retrievable under quantization because the signal strength is large enough to survive precision loss. A homogeneous needle, by contrast, has a signal strength that is indistinguishable from its neighbors, making the test more sensitive.
 
 ### 5. Scoring is unambiguous
 
@@ -82,15 +83,15 @@ Exact match scoring is trivially applied. The ground truth is known, the answer 
 
 The homogeneous haystack test is not a replacement for the standard NIAH test — it is a complementary instrument that measures a different point on the capability spectrum.
 
-| Dimension | Standard NIAH | Homogeneous NIAH |
-|---|---|---|
-| Haystack content | Natural prose | Random key→value pairs |
-| Needle visibility | High contrast | Zero contrast |
-| Confounds | Semantic contrast, priors | None by design |
-| Difficulty | Lower | Higher |
-| Real-world relevance | Moderate | Higher for dense technical content |
-| Scoring | Often LLM-evaluated | Exact match |
-| Quantization sensitivity | Low | High |
+| Dimension                | Standard NIAH             | Homogeneous NIAH                   |
+| ------------------------ | ------------------------- | ---------------------------------- |
+| Haystack content         | Natural prose             | Random key→value pairs             |
+| Needle visibility        | High contrast             | Zero contrast                      |
+| Confounds                | Semantic contrast, priors | None by design                     |
+| Difficulty               | Lower                     | Higher                             |
+| Real-world relevance     | Moderate                  | Higher for dense technical content |
+| Scoring                  | Often LLM-evaluated       | Exact match                        |
+| Quantization sensitivity | Low                       | High                               |
 
 Used together, the two tests provide a richer picture: the standard test gives a ceiling that includes contrast assistance, the homogeneous test gives a floor that excludes it. The gap between the two scores is itself informative about how much a given model relies on contrast to perform retrieval.
 
