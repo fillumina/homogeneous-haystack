@@ -148,8 +148,8 @@ def build_haystack(
     Args:
     - n: number of pairs to generate
     - key_len: length of the random keys (default: 8)
-    - val_min: minimum value (default: 1000)
-    - val_max: maximum value (default: 9999)
+    - val_min: minimum value (default: 10000)
+    - val_max: maximum value (default: 99999)
 
     Returns:
     - haystack_text: a single string containing all pairs, one per line, in the format "KEY = VALUE
