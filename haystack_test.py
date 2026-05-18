@@ -141,7 +141,7 @@ def generate_value(val_min: int = 1000, val_max: int = 9999) -> int:
 
 
 def build_haystack(
-    n: int, key_len: int = 8, val_min: int = 1000, val_max: int = 9999
+    n: int, key_len: int = 8, val_min: int = 10000, val_max: int = 99999
 ) -> tuple[str, list[HaystackPair]]:
     """Build a list of `n` random KEY = VALUE lines.
 
@@ -975,10 +975,10 @@ def main() -> None:
                         help="Model name (auto-detected from API if omitted)")
     parser.add_argument("--key-len", type=int, default=8, choices=range(5, 13),
                         help="Key string length, 5-12 (default: 8)")
-    parser.add_argument("--val-min", type=int, default=1000,
-                        help="Minimum value (default: 1000)")
-    parser.add_argument("--val-max", type=int, default=9999,
-                        help="Maximum value (default: 9999)")
+    parser.add_argument("--val-min", type=int, default=10000,
+                        help="Minimum value (default: 10000)")
+    parser.add_argument("--val-max", type=int, default=99999,
+                        help="Maximum value (default: 99999)")
     parser.add_argument("--haystack-n", type=int, default=5000,
                         help="Total number of pairs in haystack (default: 5000)")
     parser.add_argument("--num-needles", type=int, default=100,
