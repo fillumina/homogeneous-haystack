@@ -687,7 +687,7 @@ def _print_message(msg: Message, is_full: bool) -> None:
 
 def run_single_experiment(
     run_index: int, config: Config, seed: int, show: str | None = None
-) -> tuple[list[ResultRow], str, dict[str, int | float | None]]:
+) -> tuple[list[ResultRow], str, dict[str, int | float | str | None]]:
     """Run one complete experiment: generate, query, score, return rows.
 
     Args:
@@ -896,7 +896,7 @@ def main() -> None:
     print()
 
     all_rows: list[ResultRow] = []
-    all_stats: list[dict[str, int | float | None]] = []
+    all_stats: list[dict[str, int | float | str | None]] = []
     timed_out_runs: list[int] = []
     truncated_runs: list[int] = []
     for run_idx in range(args.repeat):
@@ -953,7 +953,7 @@ def _print_summary(
     config: Config,
     seed: int,
     all_rows: list[ResultRow],
-    all_stats: list[dict[str, int | float | None]],
+    all_stats: list[dict[str, int | float | str | None]],
     timed_out_runs: list[int],
     truncated_runs: list[int],
     output_file: str,
@@ -1030,9 +1030,9 @@ def _print_summary(
     total = len(all_rows)
     correct = sum(1 for r in all_rows if r.correct == 1)
     if total > 0:
-        total_tokens = sum(s["total_tokens"] for s in all_stats if s["total_tokens"])
-        total_latency = sum(s["total_latency_ms"] for s in all_stats if s["total_latency_ms"])
-        total_completion = sum(s.get("total_completion") or 0 for s in all_stats)
+        total_tokens = sum(float(s["total_tokens"] or 0) for s in all_stats)
+        total_latency = sum(float(s["total_latency_ms"] or 0) for s in all_stats)
+        total_completion = sum(float(s.get("total_completion") or 0) for s in all_stats)
         print("\nOverall results:")
         print(f"  Accuracy:            {correct}/{total} ({100*correct/total:.1f}%)")
         print(f"  Total tokens:        {total_tokens}")
@@ -1052,7 +1052,7 @@ def _print_summary(
 
     print(f"\nOutput: {output_file}")
 
-    elapsed = datetime.datetime.now() - start_time
+    elapsed = datetime.datetime.now() - start_time if start_time else datetime.timedelta(0)
     minutes, remainder = divmod(int(elapsed.total_seconds()), 60)
     hours, minutes = divmod(minutes, 60)
     if hours > 0:
