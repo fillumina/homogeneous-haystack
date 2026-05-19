@@ -106,6 +106,7 @@ class Config:
     max_tokens: int
     timeout: int
     full: bool
+    fuzz: float = 0.5
 
 
 @dataclass
@@ -114,6 +115,13 @@ class ScoredNeedle:
     expected: int | str
     actual: str
     correct: int
+
+
+@dataclass
+class Summary:
+    actual_real_needles: int
+    actual_distractors: int
+    actual_total: int
 
 
 # ---------------------------------------------------------------------------
@@ -161,8 +169,68 @@ def build_haystack(
 # Needle selection
 # ---------------------------------------------------------------------------
 
+def count_real_needles(haystack_num: int, needles_num: int) -> int:
+    """Return the number of real needles that fit in the haystack.
+
+    When needles_num exceeds haystack_num, only haystack_num needles can be placed.
+    """
+    return min(haystack_num, needles_num)
+
+
+def resolve_distractors_num(
+    real_needles: int,
+    distractors_num: int | None,
+    distractor_pct: float | None,
+) -> int:
+    """Resolve the final distractor count from user-provided parameters.
+
+    Priority: explicit num > pct > default 8%.
+    """
+    if distractors_num is not None:
+        return distractors_num
+    if distractor_pct is not None:
+        return int(real_needles * distractor_pct)
+    return int(real_needles * 0.08)
+
+
+def shake_positions(positions: list[int], fuzz_pct: float) -> list[int]:
+    """Add random jitter to each position as a fraction of the step size.
+
+    Each position is shifted by ±(step * fuzz_pct), clamped to [0, max(positions)],
+    then deduplicated and re-sorted. If fuzz_pct <= 0 or fewer than 2 positions,
+    the original list is returned unchanged.
+
+    Args:
+        positions: Sorted list of positions to jitter.
+        fuzz_pct: Fraction of the step size to use as jitter range (0.0-1.0).
+
+    Returns:
+        New list of jittered, deduplicated, sorted positions.
+    """
+    if fuzz_pct <= 0 or len(positions) < 2:
+        return positions
+
+    step = positions[1] - positions[0]
+    fuzz_abs = int(step * fuzz_pct)
+
+    max_pos = max(positions)
+    result = []
+    for p in positions:
+        jitter = random.randint(-fuzz_abs, fuzz_abs)
+        result.append(max(0, min(max_pos, p + jitter)))
+    return sorted(set(result))
+
+
 def pick_needle_positions(n_total: int, n_needles: int) -> list[int]:
-    """Pick `n_needles` indices uniformly spaced across [0, n_total)."""
+    """Pick `n_needles` indices uniformly spaced across [0, n_total).
+
+    Args:
+        n_total: Total number of positions in the haystack.
+        n_needles: Number of needle positions to select.
+
+    Returns:
+        List of evenly-spaced needle positions.
+    """
     if n_needles >= n_total:
         return list(range(n_total))
     step = n_total / n_needles
@@ -216,19 +284,23 @@ def create_distractor_keys(
 
 def select_needles(
     pairs: list[HaystackPair],
-    n_needles: int
+    n_needles: int,
+    fuzz: float = 0.5,
 ) -> list[Needle]:
     """Select real needles from haystack at uniformly spaced intervals.
 
     Args:
         pairs: List of all haystack key-value pairs.
         n_needles: Number of needles to extract from the haystack.
+        fuzz: Fraction of the step size to jitter each needle position by (default: 0.5).
 
     Returns:
         List of Needle objects extracted from the haystack positions.
     """
     # list n_needles indexes to the pairs list taken at fixed intervals
     positions: list[int] = pick_needle_positions(len(pairs), n_needles)
+    if fuzz != 0.0:
+        positions = shake_positions(positions, fuzz)
 
     # extract the needles from the haystack according to the indexes in positions
     real_needles: list[Needle] = []
@@ -251,6 +323,7 @@ def generate_haystack_and_needles(
     key_len: int,
     val_min: int,
     val_max: int,
+    fuzz: float = 0.5,
 ) -> tuple[str, list[HaystackPair], list[Needle]]:
     """Generate haystack text, pair list, and shuffled needles.
 
@@ -262,6 +335,7 @@ def generate_haystack_and_needles(
         key_len: Length of random keys in characters.
         val_min: Minimum value for generated values.
         val_max: Maximum value for generated values.
+        fuzz: Fraction of the step size to jitter each needle position by (default: 0.5).
 
     Returns:
         A tuple of (haystack_text, pairs, shuffled_needles).
@@ -273,7 +347,7 @@ def generate_haystack_and_needles(
     )
 
     # Select real needles from haystack at fixed intervals
-    real_needles = select_needles(pairs, needles_num)
+    real_needles = select_needles(pairs, needles_num, fuzz)
 
     # Compute number of distractors needed
     if distractors_num is not None:
@@ -711,6 +785,7 @@ def run_single_experiment(
         key_len=config.key_len,
         val_min=config.val_min,
         val_max=config.val_max,
+        fuzz=config.fuzz,
     )
 
     parsed, messages, response_text, raw_response, model_name, usage, latency_ms, error, truncated = (
@@ -844,6 +919,8 @@ def main() -> None:
                         help="Number of independent runs (default: 1)")
     parser.add_argument("--seed", type=int, default=None,
                         help="Base random seed (random if omitted)")
+    parser.add_argument("--fuzz", type=float, default=0.5,
+                        help="Jitter needle positions as fraction of step size (default: 0.5 = 50%%)")
     parser.add_argument("--output", default="results.csv",
                         help="Output CSV path (default: results.csv)")
 
@@ -866,32 +943,23 @@ def main() -> None:
         max_tokens=args.max_tokens,
         timeout=args.timeout,
         full=args.full,
+        fuzz=args.fuzz,
     )
 
     validate_generation_params(config)
 
     seed = args.seed if args.seed is not None else secrets.randbits(31)
-    actual_real_needles = len(pick_needle_positions(args.haystack_num, args.needles_num))
-    if args.distractors_num is not None:
-        actual_distractors = args.distractors_num
-        distractor_mode = "num"
-    elif args.distractor_pct is not None:
-        actual_distractors = int(actual_real_needles * args.distractor_pct)
-        distractor_mode = "pct"
-    else:
-        actual_distractors = int(actual_real_needles * 0.08)
-        distractor_mode = "pct"
+    actual_real_needles = count_real_needles(args.haystack_num, args.needles_num)
+    actual_distractors = resolve_distractors_num(
+        actual_real_needles, args.distractors_num, args.distractor_pct
+    )
     actual_total = actual_real_needles + actual_distractors
     print(f"Seed: {seed}")
     print(f"Endpoint: {args.endpoint}")
-    if distractor_mode == "num":
-        print(f"Haystack: {args.haystack_num} pairs, {actual_total} needles "
-              f"({actual_real_needles} real + {actual_distractors} distractors)")
-    else:
-        pct = args.distractor_pct if args.distractor_pct is not None else 0.08
-        print(f"Haystack: {args.haystack_num} pairs, {actual_total} needles "
-              f"({actual_real_needles} real + {actual_distractors} distractors, "
-              f"{pct*100:.0f}% distractors)")
+    pct = args.distractor_pct if args.distractor_pct is not None else 0.08
+    print(f"Haystack: {args.haystack_num} pairs, {actual_total} needles "
+          f"({actual_real_needles} real + {actual_distractors} distractors, "
+          f"{pct*100:.0f}% distractors)")
     print(f"Output: {args.output}")
     print()
 
@@ -939,6 +1007,11 @@ def main() -> None:
     _print_summary(
         config=config,
         seed=seed,
+        summary=Summary(
+            actual_real_needles=actual_real_needles,
+            actual_distractors=actual_distractors,
+            actual_total=actual_total,
+        ),
         all_rows=all_rows,
         all_stats=all_stats,
         timed_out_runs=timed_out_runs,
@@ -952,6 +1025,7 @@ def main() -> None:
 def _print_summary(
     config: Config,
     seed: int,
+    summary: Summary,
     all_rows: list[ResultRow],
     all_stats: list[dict[str, int | float | str | None]],
     timed_out_runs: list[int],
@@ -966,6 +1040,7 @@ def _print_summary(
     Args:
         config: Benchmark configuration used.
         seed: Random seed used for reproducibility.
+        summary: Computed experiment summary data.
         all_rows: All result rows from all runs.
         all_stats: Per-run statistics.
         timed_out_runs: List of run indices that timed out.
@@ -979,17 +1054,9 @@ def _print_summary(
     print("=" * 60)
 
     # Configuration
-    actual_real_needles = len(pick_needle_positions(config.haystack_num, config.needles_num))
-    if config.distractors_num is not None:
-        actual_distractors = config.distractors_num
-    elif config.distractor_pct is not None:
-        actual_distractors = int(actual_real_needles * config.distractor_pct)
-    else:
-        actual_distractors = int(actual_real_needles * 0.08)
-    actual_total = actual_real_needles + actual_distractors
     print("\nConfiguration:")
     print(f"  Haystack size:     {config.haystack_num}")
-    print(f"  Num needles:       {actual_total} ({actual_real_needles} real + {actual_distractors} distractors)")
+    print(f"  Num needles:       {summary.actual_total} ({summary.actual_real_needles} real + {summary.actual_distractors} distractors)")
     if config.distractors_num is not None:
         print(f"  Distractors:       {config.distractors_num} (exact count)")
     elif config.distractor_pct is not None:

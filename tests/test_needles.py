@@ -7,6 +7,7 @@ from haystack_test import (
     generate_haystack_and_needles,
     pick_needle_positions,
     select_needles,
+    shake_positions,
     validate_generation_params,
 )
 
@@ -139,6 +140,7 @@ class TestSelectNeedles:
             assert hasattr(needle, "is_distractor")
 
 
+
 class TestNumNeedlesGreaterThanHaystackN:
     def test_only_haystack_num_real_needles_when_requested_exceeds_haystack(self, seeded_random):
         seeded_random(42)
@@ -152,6 +154,7 @@ class TestNumNeedlesGreaterThanHaystackN:
             key_len=8,
             val_min=10000,
             val_max=99999,
+            fuzz=0,
         )
         real = [n for n in needles if not n.is_distractor]
         assert len(real) == haystack_num
@@ -169,6 +172,7 @@ class TestNumNeedlesGreaterThanHaystackN:
             key_len=8,
             val_min=10000,
             val_max=99999,
+            fuzz=0,
         )
         real = [n for n in needles if not n.is_distractor]
         distractors = [n for n in needles if n.is_distractor]
@@ -188,6 +192,7 @@ class TestNumNeedlesGreaterThanHaystackN:
             key_len=8,
             val_min=10000,
             val_max=99999,
+            fuzz=0,
         )
         real = [n for n in needles if not n.is_distractor]
         distractors = [n for n in needles if n.is_distractor]
@@ -206,6 +211,7 @@ class TestNumNeedlesGreaterThanHaystackN:
             key_len=8,
             val_min=10000,
             val_max=99999,
+            fuzz=0,
         )
         real = [n for n in needles if not n.is_distractor]
         distractors = [n for n in needles if n.is_distractor]
@@ -224,6 +230,7 @@ class TestNumNeedlesGreaterThanHaystackN:
             key_len=8,
             val_min=10000,
             val_max=99999,
+            fuzz=0,
         )
         distractors = [n for n in needles if n.is_distractor]
         assert len(distractors) == 0
@@ -243,6 +250,7 @@ class TestDistractorsNum:
             key_len=8,
             val_min=10000,
             val_max=99999,
+            fuzz=0,
         )
         real = [n for n in needles if not n.is_distractor]
         distractors = [n for n in needles if n.is_distractor]
@@ -261,6 +269,7 @@ class TestDistractorsNum:
             key_len=8,
             val_min=10000,
             val_max=99999,
+            fuzz=0,
         )
         distractors = [n for n in needles if n.is_distractor]
         assert len(distractors) == 0
@@ -277,6 +286,7 @@ class TestDistractorsNum:
             key_len=8,
             val_min=10000,
             val_max=99999,
+            fuzz=0,
         )
         real = [n for n in needles if not n.is_distractor]
         distractors = [n for n in needles if n.is_distractor]
@@ -295,6 +305,7 @@ class TestDistractorsNum:
             key_len=8,
             val_min=10000,
             val_max=99999,
+            fuzz=0,
         )
         distractors = [n for n in needles if n.is_distractor]
         assert len(distractors) == 2
@@ -392,3 +403,87 @@ class TestValidation:
             full=False,
         )
         validate_generation_params(config)
+
+
+class TestShakePositions:
+    def test_fuzz_zero_is_deterministic(self):
+        base = pick_needle_positions(100, 10)
+        r1 = shake_positions(base, 0)
+        r2 = shake_positions(base, 0)
+        assert r1 == r2 == base
+
+    def test_fuzz_zero_preserves_uniform_spacing(self):
+        base = pick_needle_positions(100, 10)
+        result = shake_positions(base, 0)
+        diffs = [result[i+1] - result[i] for i in range(len(result)-1)]
+        assert max(diffs) - min(diffs) <= 1
+
+    def test_fuzz_breaks_uniform_spacing(self, seeded_random):
+        seeded_random(42)
+        base = pick_needle_positions(100, 10)
+        result = shake_positions(base, 0.3)
+        diffs = [result[i+1] - result[i] for i in range(len(result)-1)]
+        assert max(diffs) - min(diffs) > 1
+
+    def test_fuzz_positions_in_range(self, seeded_random):
+        seeded_random(42)
+        base = pick_needle_positions(100, 10)
+        result = shake_positions(base, 0.5)
+        for pos in result:
+            assert 0 <= pos < 100
+
+    def test_fuzz_positions_still_sorted(self, seeded_random):
+        seeded_random(42)
+        base = pick_needle_positions(100, 10)
+        result = shake_positions(base, 0.5)
+        assert result == sorted(result)
+
+    def test_fuzz_positions_unique(self, seeded_random):
+        seeded_random(42)
+        base = pick_needle_positions(100, 10)
+        result = shake_positions(base, 0.5)
+        assert len(result) == len(set(result))
+
+    def test_fuzz_large_does_not_deduplicate_all(self, seeded_random):
+        seeded_random(42)
+        base = pick_needle_positions(1000, 10)
+        result = shake_positions(base, 0.5)
+        assert len(result) == 10
+
+    def test_fuzz_positions_are_randomized(self, seeded_random):
+        seeded_random(42)
+        base1 = pick_needle_positions(100, 10)
+        result1 = shake_positions(base1, 0.5)
+        seeded_random(99)
+        base2 = pick_needle_positions(100, 10)
+        result2 = shake_positions(base2, 0.5)
+        assert result1 != result2
+
+    def test_fuzz_boundary_clamp_low(self):
+        # With 100% fuzz, all positions should be clamped to valid range
+        base = pick_needle_positions(10, 2)
+        result = shake_positions(base, 1.0)
+        assert all(0 <= p < 10 for p in result)
+        assert len(result) == 2
+
+    def test_fuzz_boundary_clamp_high(self):
+        base = pick_needle_positions(10, 2)
+        result = shake_positions(base, 1.0)
+        assert all(p < 10 for p in result)
+
+    def test_fuzz_with_single_needle(self, seeded_random):
+        seeded_random(42)
+        base = pick_needle_positions(100, 1)
+        result = shake_positions(base, 0.5)
+        assert len(result) == 1
+        assert 0 <= result[0] < 100
+
+    def test_fuzz_returns_copy_not_mutated_base(self):
+        base = pick_needle_positions(100, 10)
+        original = base.copy()
+        import random
+        random.seed(42)
+        result = shake_positions(base, 0.5)
+        # Base should not be mutated
+        assert base == original
+        assert result is not base
