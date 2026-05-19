@@ -1,11 +1,13 @@
 import pytest
 
 from haystack_test import (
+    Config,
     Needle,
     create_distractor_keys,
     generate_haystack_and_needles,
     pick_needle_positions,
     select_needles,
+    validate_generation_params,
 )
 
 
@@ -146,6 +148,7 @@ class TestNumNeedlesGreaterThanHaystackN:
             haystack_num=haystack_num,
             needles_num=needles_num,
             distractor_pct=0.08,
+            distractors_num=None,
             key_len=8,
             val_min=10000,
             val_max=99999,
@@ -162,6 +165,7 @@ class TestNumNeedlesGreaterThanHaystackN:
             haystack_num=haystack_num,
             needles_num=needles_num,
             distractor_pct=distractor_pct,
+            distractors_num=None,
             key_len=8,
             val_min=10000,
             val_max=99999,
@@ -180,6 +184,7 @@ class TestNumNeedlesGreaterThanHaystackN:
             haystack_num=haystack_num,
             needles_num=needles_num,
             distractor_pct=distractor_pct,
+            distractors_num=None,
             key_len=8,
             val_min=10000,
             val_max=99999,
@@ -197,6 +202,7 @@ class TestNumNeedlesGreaterThanHaystackN:
             haystack_num=haystack_num,
             needles_num=needles_num,
             distractor_pct=distractor_pct,
+            distractors_num=None,
             key_len=8,
             val_min=10000,
             val_max=99999,
@@ -214,9 +220,175 @@ class TestNumNeedlesGreaterThanHaystackN:
             haystack_num=haystack_num,
             needles_num=needles_num,
             distractor_pct=0.0,
+            distractors_num=None,
             key_len=8,
             val_min=10000,
             val_max=99999,
         )
         distractors = [n for n in needles if n.is_distractor]
         assert len(distractors) == 0
+
+
+class TestDistractorsNum:
+    def test_exact_distractor_count(self, seeded_random):
+        seeded_random(42)
+        haystack_num = 50
+        needles_num = 20
+        exact_distractors = 5
+        _, _, needles = generate_haystack_and_needles(
+            haystack_num=haystack_num,
+            needles_num=needles_num,
+            distractor_pct=None,
+            distractors_num=exact_distractors,
+            key_len=8,
+            val_min=10000,
+            val_max=99999,
+        )
+        real = [n for n in needles if not n.is_distractor]
+        distractors = [n for n in needles if n.is_distractor]
+        assert len(real) == needles_num
+        assert len(distractors) == exact_distractors
+
+    def test_zero_distractors_with_num(self, seeded_random):
+        seeded_random(42)
+        haystack_num = 17
+        needles_num = 100
+        _, _, needles = generate_haystack_and_needles(
+            haystack_num=haystack_num,
+            needles_num=needles_num,
+            distractor_pct=None,
+            distractors_num=0,
+            key_len=8,
+            val_min=10000,
+            val_max=99999,
+        )
+        distractors = [n for n in needles if n.is_distractor]
+        assert len(distractors) == 0
+
+    def test_default_8_pct_when_neither_set(self, seeded_random):
+        seeded_random(42)
+        haystack_num = 50
+        needles_num = 20
+        _, _, needles = generate_haystack_and_needles(
+            haystack_num=haystack_num,
+            needles_num=needles_num,
+            distractor_pct=None,
+            distractors_num=None,
+            key_len=8,
+            val_min=10000,
+            val_max=99999,
+        )
+        real = [n for n in needles if not n.is_distractor]
+        distractors = [n for n in needles if n.is_distractor]
+        expected = int(len(real) * 0.08)
+        assert len(distractors) == expected
+
+    def test_distractors_num_overrides_pct(self, seeded_random):
+        seeded_random(42)
+        haystack_num = 50
+        needles_num = 20
+        _, _, needles = generate_haystack_and_needles(
+            haystack_num=haystack_num,
+            needles_num=needles_num,
+            distractor_pct=0.5,
+            distractors_num=2,
+            key_len=8,
+            val_min=10000,
+            val_max=99999,
+        )
+        distractors = [n for n in needles if n.is_distractor]
+        assert len(distractors) == 2
+
+
+class TestValidation:
+    def test_both_distractor_options_set_raises(self):
+        config = Config(
+            endpoint="http://localhost:8080/v1/chat/completions",
+            model=None,
+            key_len=8,
+            val_min=10000,
+            val_max=99999,
+            haystack_num=100,
+            needles_num=50,
+            distractor_pct=0.1,
+            distractors_num=5,
+            temperature=0.0,
+            max_tokens=240000,
+            timeout=7200,
+            full=False,
+        )
+        with pytest.raises(ValueError, match="cannot both be set"):
+            validate_generation_params(config)
+
+    def test_negative_distractors_num_raises(self):
+        config = Config(
+            endpoint="http://localhost:8080/v1/chat/completions",
+            model=None,
+            key_len=8,
+            val_min=10000,
+            val_max=99999,
+            haystack_num=100,
+            needles_num=50,
+            distractor_pct=None,
+            distractors_num=-1,
+            temperature=0.0,
+            max_tokens=240000,
+            timeout=7200,
+            full=False,
+        )
+        with pytest.raises(ValueError, match="distractors_num must be >= 0"):
+            validate_generation_params(config)
+
+    def test_valid_no_distractors(self):
+        config = Config(
+            endpoint="http://localhost:8080/v1/chat/completions",
+            model=None,
+            key_len=8,
+            val_min=10000,
+            val_max=99999,
+            haystack_num=100,
+            needles_num=50,
+            distractor_pct=None,
+            distractors_num=0,
+            temperature=0.0,
+            max_tokens=240000,
+            timeout=7200,
+            full=False,
+        )
+        validate_generation_params(config)
+
+    def test_valid_pct_only(self):
+        config = Config(
+            endpoint="http://localhost:8080/v1/chat/completions",
+            model=None,
+            key_len=8,
+            val_min=10000,
+            val_max=99999,
+            haystack_num=100,
+            needles_num=50,
+            distractor_pct=0.1,
+            distractors_num=None,
+            temperature=0.0,
+            max_tokens=240000,
+            timeout=7200,
+            full=False,
+        )
+        validate_generation_params(config)
+
+    def test_valid_num_only(self):
+        config = Config(
+            endpoint="http://localhost:8080/v1/chat/completions",
+            model=None,
+            key_len=8,
+            val_min=10000,
+            val_max=99999,
+            haystack_num=100,
+            needles_num=50,
+            distractor_pct=None,
+            distractors_num=10,
+            temperature=0.0,
+            max_tokens=240000,
+            timeout=7200,
+            full=False,
+        )
+        validate_generation_params(config)
