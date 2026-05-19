@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import datetime
 import json
 import random
 import secrets
@@ -989,8 +990,8 @@ def main() -> None:
                         help="Sampling temperature (default: 0.0)")
     parser.add_argument("--max-tokens", type=int, default=240000,
                         help="Max tokens per response (default: 240000)")
-    parser.add_argument("--timeout", type=int, default=3600,
-                        help="Request timeout in seconds (default: 3600)")
+    parser.add_argument("--timeout", type=int, default=7200,
+                        help="Request timeout in seconds (default: 7200)")
     parser.add_argument("--show", choices=["prompt", "response", "all"],
                         help="Print prompt/response for debugging (prompt=response/all)")
     parser.add_argument("--single", action="store_true",
@@ -1005,6 +1006,9 @@ def main() -> None:
                         help="Output CSV path (default: results.csv)")
 
     args = parser.parse_args()
+
+    start_time = datetime.datetime.now()
+    print(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
     config = Config(
         endpoint=args.endpoint,
@@ -1174,6 +1178,14 @@ def _print_summary(
             print("  (completion_tokens reached max_tokens — model was cut off)")
 
     print(f"\nOutput: {output_file}")
+
+    elapsed = datetime.datetime.now() - start_time
+    minutes, remainder = divmod(int(elapsed.total_seconds()), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours > 0:
+        print(f"Elapsed: {hours}h {minutes}m {remainder}s")
+    else:
+        print(f"Elapsed: {minutes}m {remainder}s")
     print("=" * 60)
 
 
