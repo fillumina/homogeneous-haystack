@@ -273,7 +273,7 @@ def generate_haystack_and_needles(
     real_needles = select_needles(pairs, num_needles)
 
     # Compute number of distractors needed
-    n_distractor = int(num_needles * distractor_pct)
+    n_distractor = int(len(real_needles) * distractor_pct)
 
     # Create distractor needles (keys not in haystack)
     distractor_needles = create_distractor_keys(
@@ -284,10 +284,10 @@ def generate_haystack_and_needles(
     )
 
     # Combine real and distractor needles, then shuffle
-    needles = real_needles + distractor_needles
-    random.shuffle(needles)
+    all_needles = real_needles + distractor_needles
+    random.shuffle(all_needles)
 
-    return haystack_text, pairs, needles
+    return haystack_text, pairs, all_needles
 
 
 # ---------------------------------------------------------------------------
@@ -850,10 +850,14 @@ def main() -> None:
     validate_generation_params(config)
 
     seed = args.seed if args.seed is not None else secrets.randbits(31)
+    actual_real_needles = len(pick_needle_positions(args.haystack_n, args.num_needles))
+    actual_distractors = int(actual_real_needles * args.distractor_pct)
+    actual_total = actual_real_needles + actual_distractors
     print(f"Seed: {seed}")
     print(f"Endpoint: {args.endpoint}")
-    print(f"Haystack: {args.haystack_n} pairs, {args.num_needles} needles "
-          f"({args.distractor_pct*100:.0f}% distractors)")
+    print(f"Haystack: {args.haystack_n} pairs, {actual_total} needles "
+          f"({actual_real_needles} real + {actual_distractors} distractors, "
+          f"{args.distractor_pct*100:.0f}% distractors)")
     print(f"Output: {args.output}")
     print()
 
@@ -941,9 +945,12 @@ def _print_summary(
     print("=" * 60)
 
     # Configuration
+    actual_real_needles = len(pick_needle_positions(config.haystack_n, config.num_needles))
+    actual_distractors = int(actual_real_needles * config.distractor_pct)
+    actual_total = actual_real_needles + actual_distractors
     print("\nConfiguration:")
     print(f"  Haystack size:     {config.haystack_n}")
-    print(f"  Num needles:       {config.num_needles}")
+    print(f"  Num needles:       {actual_total} ({actual_real_needles} real + {actual_distractors} distractors)")
     print(f"  Distractor pct:    {config.distractor_pct * 100:.1f}%")
     print(f"  Key length:        {config.key_len}")
     print(f"  Value range:       {config.val_min} - {config.val_max}")

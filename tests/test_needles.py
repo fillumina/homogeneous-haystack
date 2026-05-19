@@ -1,6 +1,12 @@
 import pytest
 
-from haystack_test import Needle, pick_needle_positions, select_needles
+from haystack_test import (
+    Needle,
+    create_distractor_keys,
+    generate_haystack_and_needles,
+    pick_needle_positions,
+    select_needles,
+)
 
 
 class TestPickNeedlePositions:
@@ -129,3 +135,88 @@ class TestSelectNeedles:
             assert hasattr(needle, "key")
             assert hasattr(needle, "expected")
             assert hasattr(needle, "is_distractor")
+
+
+class TestNumNeedlesGreaterThanHaystackN:
+    def test_only_haystack_n_real_needles_when_requested_exceeds_haystack(self, seeded_random):
+        seeded_random(42)
+        haystack_n = 17
+        num_needles = 100
+        _, pairs, needles = generate_haystack_and_needles(
+            haystack_n=haystack_n,
+            num_needles=num_needles,
+            distractor_pct=0.08,
+            key_len=8,
+            val_min=10000,
+            val_max=99999,
+        )
+        real = [n for n in needles if not n.is_distractor]
+        assert len(real) == haystack_n
+
+    def test_distractor_count_based_on_actual_real_needles(self, seeded_random):
+        seeded_random(42)
+        haystack_n = 17
+        num_needles = 100
+        distractor_pct = 0.08
+        _, _, needles = generate_haystack_and_needles(
+            haystack_n=haystack_n,
+            num_needles=num_needles,
+            distractor_pct=distractor_pct,
+            key_len=8,
+            val_min=10000,
+            val_max=99999,
+        )
+        real = [n for n in needles if not n.is_distractor]
+        distractors = [n for n in needles if n.is_distractor]
+        expected_distractors = int(len(real) * distractor_pct)
+        assert len(distractors) == expected_distractors
+
+    def test_total_needles_is_real_plus_distractors(self, seeded_random):
+        seeded_random(42)
+        haystack_n = 17
+        num_needles = 100
+        distractor_pct = 0.08
+        _, _, needles = generate_haystack_and_needles(
+            haystack_n=haystack_n,
+            num_needles=num_needles,
+            distractor_pct=distractor_pct,
+            key_len=8,
+            val_min=10000,
+            val_max=99999,
+        )
+        real = [n for n in needles if not n.is_distractor]
+        distractors = [n for n in needles if n.is_distractor]
+        assert len(needles) == len(real) + len(distractors)
+
+    def test_default_case_still_works(self, seeded_random):
+        seeded_random(42)
+        haystack_n = 100
+        num_needles = 50
+        distractor_pct = 0.1
+        _, _, needles = generate_haystack_and_needles(
+            haystack_n=haystack_n,
+            num_needles=num_needles,
+            distractor_pct=distractor_pct,
+            key_len=8,
+            val_min=10000,
+            val_max=99999,
+        )
+        real = [n for n in needles if not n.is_distractor]
+        distractors = [n for n in needles if n.is_distractor]
+        assert len(real) == num_needles
+        assert len(distractors) == int(num_needles * distractor_pct)
+
+    def test_no_distractors_when_pct_is_zero(self, seeded_random):
+        seeded_random(42)
+        haystack_n = 17
+        num_needles = 100
+        _, _, needles = generate_haystack_and_needles(
+            haystack_n=haystack_n,
+            num_needles=num_needles,
+            distractor_pct=0.0,
+            key_len=8,
+            val_min=10000,
+            val_max=99999,
+        )
+        distractors = [n for n in needles if n.is_distractor]
+        assert len(distractors) == 0
