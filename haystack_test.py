@@ -193,10 +193,10 @@ def create_distractor_keys(
     Returns:
         List of Needle objects with is_distractor=True and expected=None.
     """
-    # a set that contains the all the keys of the haystack
+    # a set that contains all the keys of the haystack
     haystack_keys = set(k for k, _ in pairs)
 
-    # contains the set of disctractors keys: keys not in the haystack
+    # contains the set of distractor keys: keys not in the haystack
     distractor_keys: set[str] = set()
     tries = 0
     while len(distractor_keys) < n_distractor and tries < n_distractor * 20:
@@ -207,7 +207,7 @@ def create_distractor_keys(
 
     distractor_needles: list[Needle] = []
 
-    # crete the distractors using the remaining indexes of the positions
+    # create the distractors using the remaining indexes of the positions
     idx = starting_index
     for key in distractor_keys:
         distractor_needles.append(Needle(
@@ -607,7 +607,7 @@ def _query_batch(
     needle_keys: set[str] = {n.key for n in needles}
 
     try:
-        response, latency_ms = query_llama(
+        raw_response, latency_ms = query_llama(
             config.endpoint,
             messages,
             model=config.model,
@@ -615,10 +615,9 @@ def _query_batch(
             max_tokens=config.max_tokens,
             timeout=config.timeout,
         )
-        raw_response = response
-        model_name = extract_model_name(response)
-        response_text = response["choices"][0]["message"].get("content", "")  # type: ignore[typeddict-item]
-        usage = response.get("usage")
+        model_name = extract_model_name(raw_response)
+        response_text = raw_response["choices"][0]["message"].get("content", "")  # type: ignore[typeddict-item]
+        usage = raw_response.get("usage")
         error = None
         truncated = (
             usage is not None
@@ -670,9 +669,9 @@ def _build_rows(
             correct=score.correct,
             expected=score.expected,
             actual=score.actual,
-            prompt_tokens=usage["prompt_tokens"] if usage else None,
-            completion_tokens=usage["completion_tokens"] if usage else None,
-            total_tokens=usage["total_tokens"] if usage else None,
+            prompt_tokens=usage.get("prompt_tokens") if usage else None,
+            completion_tokens=usage.get("completion_tokens") if usage else None,
+            total_tokens=usage.get("total_tokens") if usage else None,
             latency_ms=latency_ms,
         ))
     return rows
@@ -712,9 +711,9 @@ def _build_rows_single(
             correct=score.correct,
             expected=score.expected,
             actual=score.actual,
-            prompt_tokens=usage["prompt_tokens"] if usage else None,
-            completion_tokens=usage["completion_tokens"] if usage else None,
-            total_tokens=usage["total_tokens"] if usage else None,
+            prompt_tokens=usage.get("prompt_tokens") if usage else None,
+            completion_tokens=usage.get("completion_tokens") if usage else None,
+            total_tokens=usage.get("total_tokens") if usage else None,
             latency_ms=latencies[i] if i < len(latencies) else None,
         ))
     return rows
@@ -892,6 +891,7 @@ def run_single_experiment(
     stats: dict[str, int | float | str | None] = {
         "total_tokens": total_tokens,
         "total_latency_ms": total_latency,
+        "total_completion": total_completion,
         "error": error,
         "truncated": truncated,
         "model_name": model_name,
@@ -988,9 +988,9 @@ def main() -> None:
     parser.add_argument("--temperature", type=float, default=0.0,
                         help="Sampling temperature (default: 0.0)")
     parser.add_argument("--max-tokens", type=int, default=240000,
-                        help="Max tokens per response (default: 32768)")
-    parser.add_argument("--timeout", type=int, default=1800,
-                        help="Request timeout in seconds (default: 1800)")
+                        help="Max tokens per response (default: 240000)")
+    parser.add_argument("--timeout", type=int, default=3600,
+                        help="Request timeout in seconds (default: 3600)")
     parser.add_argument("--show", choices=["prompt", "response", "all"],
                         help="Print prompt/response for debugging (prompt=response/all)")
     parser.add_argument("--single", action="store_true",
@@ -1155,11 +1155,7 @@ def _print_summary(
     if total > 0:
         total_tokens = sum(s["total_tokens"] for s in all_stats if s["total_tokens"])
         total_latency = sum(s["total_latency_ms"] for s in all_stats if s["total_latency_ms"])
-        total_completion = sum(
-            (s.get("tokens_per_sec", 0) or 0) * (s["total_latency_ms"] / 1000)
-            for s in all_stats
-            if s["total_latency_ms"]
-        )
+        total_completion = sum(s.get("total_completion") or 0 for s in all_stats)
         print("\nOverall results:")
         print(f"  Accuracy:            {correct}/{total} ({100*correct/total:.1f}%)")
         print(f"  Total tokens:        {total_tokens}")
