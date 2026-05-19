@@ -1086,6 +1086,7 @@ def main() -> None:
         truncated_runs=truncated_runs,
         output_file=args.output,
         repeat=args.repeat,
+        start_time=start_time,
     )
 
 
@@ -1098,6 +1099,8 @@ def _print_summary(
     truncated_runs: list[int],
     output_file: str,
     repeat: int = 1,
+    *,
+    start_time: datetime.datetime | None = None,
 ) -> None:
     """Print a comprehensive summary of the experiment.
 
