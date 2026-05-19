@@ -13,7 +13,6 @@ from haystack_test import (
     pick_needle_positions,
     select_needles,
     build_prompt,
-    build_single_needle_prompt,
     parse_response,
     score_needles,
     HaystackQueryError,

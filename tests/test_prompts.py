@@ -3,7 +3,6 @@ import pytest
 from haystack_test import (
     Needle,
     build_prompt,
-    build_single_needle_prompt,
     SYSTEM_PROMPT,
 )
 
@@ -65,45 +64,6 @@ class TestBuildPrompt:
         result = build_prompt(haystack_text, [])
         assert len(result) == 2
         assert "What is the value for" not in result[1]["content"]
-
-
-class TestBuildSingleNeedlePrompt:
-    def test_returns_two_messages(self, haystack_pairs):
-        haystack_text, _ = haystack_pairs
-        result = build_single_needle_prompt(haystack_text, "TESTKEY")
-        assert isinstance(result, list)
-        assert len(result) == 2
-
-    def test_first_message_is_system(self, haystack_pairs):
-        haystack_text, _ = haystack_pairs
-        result = build_single_needle_prompt(haystack_text, "TESTKEY")
-        assert result[0]["role"] == "system"
-
-    def test_second_message_is_user(self, haystack_pairs):
-        haystack_text, _ = haystack_pairs
-        result = build_single_needle_prompt(haystack_text, "TESTKEY")
-        assert result[1]["role"] == "user"
-
-    def test_system_message_content(self, haystack_pairs):
-        haystack_text, _ = haystack_pairs
-        result = build_single_needle_prompt(haystack_text, "TESTKEY")
-        assert "random key=value pairs" in result[0]["content"].lower()
-
-    def test_haystack_text_in_user_message(self, haystack_pairs):
-        haystack_text, _ = haystack_pairs
-        result = build_single_needle_prompt(haystack_text, "TESTKEY")
-        assert haystack_text in result[1]["content"]
-
-    def test_key_appended(self, haystack_pairs):
-        haystack_text, _ = haystack_pairs
-        result = build_single_needle_prompt(haystack_text, "MYKEY")
-        assert "MYKEY=" in result[1]["content"]
-
-    def test_key_value_format(self, haystack_pairs):
-        haystack_text, _ = haystack_pairs
-        result = build_single_needle_prompt(haystack_text, "ABC12345")
-        assert "ABC12345=" in result[1]["content"]
-        assert "ABC12345" not in haystack_text.split("\n")[0]  # ensure it's not just from haystack
 
 
 

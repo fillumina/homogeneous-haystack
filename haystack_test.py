@@ -70,14 +70,6 @@ class Payload(TypedDict):
 
 
 @dataclass(frozen=True)
-class Interaction:
-    messages: list[Message]
-    response: ApiResponseBody | None
-    content: str
-    needle: Needle
-
-
-@dataclass(frozen=True)
 class ResultRow:
     run: int
     haystack_size: int
@@ -112,7 +104,6 @@ class Config:
     temperature: float
     max_tokens: int
     timeout: int
-    single: bool
     full: bool
 
 
@@ -332,25 +323,6 @@ def build_prompt(haystack_text: str, needles: list[Needle]) -> list[Message]:
     ]
 
 
-def build_single_needle_prompt(haystack_text: str, needle_key: str) -> list[Message]:
-    """Build a prompt querying for a single needle's value.
-
-    Args:
-        haystack_text: The full haystack text containing key=value pairs.
-        needle_key: The key to look up in the haystack.
-
-    Returns:
-        System and user messages for the single query.
-    """
-    return [
-        {
-            "role": "system",
-            "content": "These are random key=value pairs. Find the value for the given key by looking it up in the list. Answer with JUST the number, nothing else.",
-        },
-        {"role": "user", "content": f"{haystack_text}\n\n{needle_key}="},
-    ]
-
-
 # ---------------------------------------------------------------------------
 # API query
 # ---------------------------------------------------------------------------
@@ -523,69 +495,6 @@ def _truncate(text: str, max_lines: int = 5, prefix: str = "...") -> str:
     return f"{first}\n{prefix}\n{last}"
 
 
-def _query_single_needles(
-    config: Config,
-    haystack_text: str,
-    needles: list[Needle],
-) -> tuple[dict[str, str], list[Interaction], ApiResponseBody | None, str,
-           list[float], list[ApiUsage | None], str | None, bool]:
-    """Query the model one needle at a time.
-
-    Args:
-        config: Benchmark configuration.
-        haystack_text: The full haystack text.
-        needles: List of needles to query.
-
-    Returns:
-        Tuple of (parsed results, interaction history, last raw response,
-        concatenated response text, per-query latencies, per-query usages,
-        error message or None, truncated flag).
-    """
-    interactions: list[Interaction] = []
-    raw_response: ApiResponseBody | None = None
-    latencies: list[float] = []
-    usages: list[ApiUsage | None] = []
-    error: str | None = None
-    truncated = False
-
-    for needle in needles:
-        messages = build_single_needle_prompt(haystack_text, needle.key)
-        try:
-            response, latency_ms = query_llama(
-                config.endpoint,
-                messages,
-                model=config.model,
-                temperature=config.temperature,
-                max_tokens=config.max_tokens,
-                timeout=config.timeout,
-            )
-            raw_response = response
-            content = response["choices"][0]["message"].get("content", "")  # type: ignore[typeddict-item]
-            usage = response.get("usage")
-            if (usage is not None
-                    and usage.get("completion_tokens") == config.max_tokens):
-                truncated = True
-        except HaystackQueryError as e:
-            response = None  # type: ignore[assignment]
-            content = str(e)
-            latency_ms = 0.0
-            usage = None
-            error = str(e)
-
-        interactions.append(Interaction(
-            messages=messages,
-            response=response,
-            content=content,
-            needle=needle,
-        ))
-        latencies.append(latency_ms)
-        usages.append(usage)
-
-    parsed = {n.key: inter.content for n, inter in zip(needles, interactions)}
-    response_text = "\n".join(inter.content for inter in interactions)
-    return parsed, interactions, raw_response, response_text, latencies, usages, error, truncated
-
-
 def _query_batch(
     config: Config,
     haystack_text: str,
@@ -678,48 +587,6 @@ def _build_rows(
     return rows
 
 
-def _build_rows_single(
-    run_index: int,
-    needles: list[Needle],
-    pairs: list[HaystackPair],
-    parsed: dict[str, str],
-    usages: list[ApiUsage | None],
-    latencies: list[float],
-) -> list[ResultRow]:
-    """Build result rows with per-query usage data (single-mode).
-
-    Args:
-        run_index: The experiment run number.
-        needles: List of needles that were queried.
-        pairs: Full list of haystack pairs (for depth calculation).
-        parsed: Parsed key -> value results from the model.
-        usages: Per-query token usage info.
-        latencies: Per-query latency info.
-
-    Returns:
-        List of ResultRow objects with per-query correctness, depth, and usage.
-    """
-    rows: list[ResultRow] = []
-    for i, (needle, score) in enumerate(zip(needles, score_needles(needles, parsed))):
-        depth_pct = round(
-            needle.index / (len(pairs) - 1) * 100, 2
-        ) if len(pairs) > 1 else 0.0
-        usage = usages[i]
-        rows.append(ResultRow(
-            run=run_index,
-            haystack_size=len(pairs),
-            depth_pct=depth_pct,
-            correct=score.correct,
-            expected=score.expected,
-            actual=score.actual,
-            prompt_tokens=usage.get("prompt_tokens") if usage else None,
-            completion_tokens=usage.get("completion_tokens") if usage else None,
-            total_tokens=usage.get("total_tokens") if usage else None,
-            latency_ms=latencies[i] if i < len(latencies) else None,
-        ))
-    return rows
-
-
 def _print_results(
     run_index: int,
     model_name: str,
@@ -729,8 +596,6 @@ def _print_results(
     *,
     show: str | None = None,
     is_full: bool,
-    is_single: bool = False,
-    interactions: list[Interaction] | None = None,
     messages: list[Message] | None = None,
     raw_response: ApiResponseBody | None = None,
     response_text: str = "",
@@ -745,9 +610,7 @@ def _print_results(
         parsed: Parsed key -> value results from the model.
         show: Which debug output to show ("prompt", "response", "all", or None).
         is_full: Whether to print full untruncated content.
-        is_single: Whether single-needle mode was used.
-        interactions: Interaction history for single-mode (optional).
-        messages: Prompt messages for batch mode (optional).
+        messages: Prompt messages (optional).
         raw_response: Raw API response body (optional).
         response_text: Extracted response content text.
     """
@@ -756,29 +619,12 @@ def _print_results(
     print(f"Run {run_index} — model={model_name}")
     print("=" * 60)
 
-    # --- Single-mode interactions ---
-    if is_single and interactions is not None and (show in ("prompt", "all") or is_full):
-        for idx, inter in enumerate(interactions):
-            print(f"\n--- INTERACTION {idx + 1}/{len(interactions)} ---")
-            for i, msg in enumerate(inter.messages):
-                _print_message(msg, is_full)
-            if show in ("response", "all") or is_full:
-                print(f"\n--- RESPONSE (needle={inter.needle.key}) ---")
-                if inter.response is not None:
-                    print(json.dumps(inter.response, indent=2, default=str))
-                else:
-                    print("(no response)")
-                print(f"--- Parsed answer ---")
-                print(repr(inter.content))
-
-    # --- Batch-mode messages ---
-    elif messages is not None and (show in ("prompt", "all") or is_full):
+    if messages is not None and (show in ("prompt", "all") or is_full):
         print(f"\n--- ALL MESSAGES ({len(messages)} messages) ---")
         for msg in messages:
             _print_message(msg, is_full)
 
-    # --- Batch-mode response ---
-    if not is_single and (show in ("response", "all") or is_full):
+    if (show in ("response", "all") or is_full):
         print(f"\n--- RAW RESPONSE (JSON) ---")
         if raw_response is not None:
             print(json.dumps(raw_response, indent=2, default=str))
@@ -787,7 +633,6 @@ def _print_results(
         print(f"\n--- CONTENT FIELD ---")
         print(repr(response_text))
 
-    # --- Parsed results summary ---
     print(f"\n--- PARSED RESULTS ---")
     scored = list(score_needles(needles, parsed))
     real_needles = []
@@ -849,7 +694,6 @@ def run_single_experiment(
     """
     random.seed(seed)
     is_full = config.full
-    is_single = config.single
 
     haystack_text, pairs, needles = generate_haystack_and_needles(
         haystack_n=config.haystack_n,
@@ -860,34 +704,15 @@ def run_single_experiment(
         val_max=config.val_max,
     )
 
-    interactions: list[Interaction] | None = None
-    messages: list[Message] | None = None
-
-    if is_single:
-        parsed, interactions, raw_response, response_text, latencies, usages, error, truncated = (
-            _query_single_needles(config, haystack_text, needles)
-        )
-        model_name = extract_model_name(raw_response) if raw_response else "error"
-        rows = _build_rows_single(
-            run_index, needles, pairs, parsed, usages, latencies
-        )
-        total_tokens = sum(
-            (u["total_tokens"] or 0) for u in usages if u
-        )
-        total_latency = sum(latencies)
-        total_completion = sum(
-            (u["completion_tokens"] or 0) for u in usages if u
-        )
-    else:
-        parsed, messages, response_text, raw_response, model_name, usage, latency_ms, error, truncated = (
-            _query_batch(config, haystack_text, needles)
-        )
-        rows = _build_rows(
-            run_index, needles, pairs, parsed, usage, latency_ms
-        )
-        total_tokens = usage["total_tokens"] if usage else 0
-        total_latency = latency_ms
-        total_completion = usage["completion_tokens"] if usage else 0
+    parsed, messages, response_text, raw_response, model_name, usage, latency_ms, error, truncated = (
+        _query_batch(config, haystack_text, needles)
+    )
+    rows = _build_rows(
+        run_index, needles, pairs, parsed, usage, latency_ms
+    )
+    total_tokens = usage["total_tokens"] if usage else 0
+    total_latency = latency_ms
+    total_completion = usage["completion_tokens"] if usage else 0
 
     stats: dict[str, int | float | str | None] = {
         "total_tokens": total_tokens,
@@ -903,7 +728,7 @@ def run_single_experiment(
         total_latency / len(needles), 1
     ) if needles else 0.0
 
-    if error and not is_single:
+    if error:
         print()
         print("=" * 60)
         print(f"Run {run_index} — {error}")
@@ -919,8 +744,7 @@ def run_single_experiment(
     elif show or is_full:
         _print_results(
             run_index, model_name, needles, pairs, parsed,
-            show=show, is_full=is_full, is_single=is_single,
-            interactions=interactions,
+            show=show, is_full=is_full,
             messages=messages,
             raw_response=raw_response,
             response_text=response_text,
@@ -994,8 +818,6 @@ def main() -> None:
                         help="Request timeout in seconds (default: 7200)")
     parser.add_argument("--show", choices=["prompt", "response", "all"],
                         help="Print prompt/response for debugging (prompt=response/all)")
-    parser.add_argument("--single", action="store_true",
-                        help="Query one needle at a time (for debugging)")
     parser.add_argument("--full", action="store_true",
                         help="Print full untruncated prompt and response")
     parser.add_argument("--repeat", type=int, default=1,
@@ -1022,7 +844,6 @@ def main() -> None:
         temperature=args.temperature,
         max_tokens=args.max_tokens,
         timeout=args.timeout,
-        single=args.single,
         full=args.full,
     )
 
