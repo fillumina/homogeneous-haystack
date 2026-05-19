@@ -6,7 +6,7 @@ Generates random key=value pairs, embeds them as haystack, queries the model for
 values at various depths, and writes results to CSV.
 
 Usage:
-  python haystack_test.py --haystack-n 5000 --num-needles 100 --repeat 3
+  python haystack_test.py --haystack-num 5000 --needles-num 100 --repeat 3
 """
 
 from __future__ import annotations
@@ -98,8 +98,8 @@ class Config:
     key_len: int
     val_min: int
     val_max: int
-    haystack_n: int
-    num_needles: int
+    haystack_num: int
+    needles_num: int
     distractor_pct: float
     temperature: float
     max_tokens: int
@@ -243,8 +243,8 @@ def select_needles(
 
 
 def generate_haystack_and_needles(
-    haystack_n: int,
-    num_needles: int,
+    haystack_num: int,
+    needles_num: int,
     distractor_pct: float,
     key_len: int,
     val_min: int,
@@ -253,8 +253,8 @@ def generate_haystack_and_needles(
     """Generate haystack text, pair list, and shuffled needles.
 
     Args:
-        haystack_n: Total number of key-value pairs in the haystack.
-        num_needles: Total number of needles (real + distractors).
+        haystack_num: Total number of key-value pairs in the haystack.
+        needles_num: Total number of needles (real + distractors).
         distractor_pct: Fraction of needles that are distractors (0.0-1.0).
         key_len: Length of random keys in characters.
         val_min: Minimum value for generated values.
@@ -266,11 +266,11 @@ def generate_haystack_and_needles(
     """
     # Build haystack
     haystack_text, pairs = build_haystack(
-        haystack_n, key_len, val_min, val_max
+        haystack_num, key_len, val_min, val_max
     )
 
     # Select real needles from haystack at fixed intervals
-    real_needles = select_needles(pairs, num_needles)
+    real_needles = select_needles(pairs, needles_num)
 
     # Compute number of distractors needed
     n_distractor = int(len(real_needles) * distractor_pct)
@@ -696,8 +696,8 @@ def run_single_experiment(
     is_full = config.full
 
     haystack_text, pairs, needles = generate_haystack_and_needles(
-        haystack_n=config.haystack_n,
-        num_needles=config.num_needles,
+        haystack_num=config.haystack_num,
+        needles_num=config.needles_num,
         distractor_pct=config.distractor_pct,
         key_len=config.key_len,
         val_min=config.val_min,
@@ -760,14 +760,14 @@ def validate_generation_params(config: Config) -> None:
         config: Benchmark configuration to validate.
 
     Raises:
-        ValueError: If any parameter is invalid (haystack_n < 1,
-            num_needles < 1, distractor_pct out of range, key_len < 1,
+        ValueError: If any parameter is invalid (haystack_num < 1,
+            needles_num < 1, distractor_pct out of range, key_len < 1,
             or val_min > val_max).
     """
-    if config.haystack_n < 1:
-        raise ValueError(f"haystack_n must be >= 1, got {config.haystack_n}")
-    if config.num_needles < 1:
-        raise ValueError(f"num_needles must be >= 1, got {config.num_needles}")
+    if config.haystack_num < 1:
+        raise ValueError(f"haystack_num must be >= 1, got {config.haystack_num}")
+    if config.needles_num < 1:
+        raise ValueError(f"needles_num must be >= 1, got {config.needles_num}")
     if not (0.0 <= config.distractor_pct < 1.0):
         raise ValueError(
             f"distractor_pct must be in [0.0, 1.0), got {config.distractor_pct}"
@@ -804,9 +804,9 @@ def main() -> None:
                         help="Minimum value (default: 10000)")
     parser.add_argument("--val-max", type=int, default=99999,
                         help="Maximum value (default: 99999)")
-    parser.add_argument("--haystack-n", type=int, default=5000,
+    parser.add_argument("--haystack-num", type=int, default=5000,
                         help="Total number of pairs in haystack (default: 5000)")
-    parser.add_argument("--num-needles", type=int, default=100,
+    parser.add_argument("--needles-num", type=int, default=100,
                         help="Number of needles to query (default: 100)")
     parser.add_argument("--distractor-pct", type=float, default=0.08,
                         help="Fraction of needles that are distractors (default: 0.08)")
@@ -838,8 +838,8 @@ def main() -> None:
         key_len=args.key_len,
         val_min=args.val_min,
         val_max=args.val_max,
-        haystack_n=args.haystack_n,
-        num_needles=args.num_needles,
+        haystack_num=args.haystack_num,
+        needles_num=args.needles_num,
         distractor_pct=args.distractor_pct,
         temperature=args.temperature,
         max_tokens=args.max_tokens,
@@ -850,12 +850,12 @@ def main() -> None:
     validate_generation_params(config)
 
     seed = args.seed if args.seed is not None else secrets.randbits(31)
-    actual_real_needles = len(pick_needle_positions(args.haystack_n, args.num_needles))
+    actual_real_needles = len(pick_needle_positions(args.haystack_num, args.needles_num))
     actual_distractors = int(actual_real_needles * args.distractor_pct)
     actual_total = actual_real_needles + actual_distractors
     print(f"Seed: {seed}")
     print(f"Endpoint: {args.endpoint}")
-    print(f"Haystack: {args.haystack_n} pairs, {actual_total} needles "
+    print(f"Haystack: {args.haystack_num} pairs, {actual_total} needles "
           f"({actual_real_needles} real + {actual_distractors} distractors, "
           f"{args.distractor_pct*100:.0f}% distractors)")
     print(f"Output: {args.output}")
@@ -945,11 +945,11 @@ def _print_summary(
     print("=" * 60)
 
     # Configuration
-    actual_real_needles = len(pick_needle_positions(config.haystack_n, config.num_needles))
+    actual_real_needles = len(pick_needle_positions(config.haystack_num, config.needles_num))
     actual_distractors = int(actual_real_needles * config.distractor_pct)
     actual_total = actual_real_needles + actual_distractors
     print("\nConfiguration:")
-    print(f"  Haystack size:     {config.haystack_n}")
+    print(f"  Haystack size:     {config.haystack_num}")
     print(f"  Num needles:       {actual_total} ({actual_real_needles} real + {actual_distractors} distractors)")
     print(f"  Distractor pct:    {config.distractor_pct * 100:.1f}%")
     print(f"  Key length:        {config.key_len}")
