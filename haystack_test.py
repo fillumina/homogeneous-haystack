@@ -69,6 +69,17 @@ class Payload(TypedDict):
     stream: bool
 
 
+class RunStats(TypedDict, total=False):
+    total_tokens: int
+    total_latency_ms: int | float
+    total_completion: int
+    error: str | None
+    truncated: bool | None
+    model_name: str | None
+    tokens_per_sec: float
+    avg_latency_ms: float
+
+
 @dataclass(frozen=True)
 class ResultRow:
     run: int
@@ -798,7 +809,7 @@ def run_single_experiment(
     total_latency = latency_ms
     total_completion = usage["completion_tokens"] if usage else 0
 
-    stats: dict[str, int | float | str | None] = {
+    stats: RunStats = {
         "total_tokens": total_tokens,
         "total_latency_ms": total_latency,
         "total_completion": total_completion,
@@ -964,7 +975,7 @@ def main() -> None:
     print()
 
     all_rows: list[ResultRow] = []
-    all_stats: list[dict[str, int | float | str | None]] = []
+    all_stats: list[RunStats] = []
     timed_out_runs: list[int] = []
     truncated_runs: list[int] = []
     for run_idx in range(args.repeat):
@@ -1027,7 +1038,7 @@ def _print_summary(
     seed: int,
     summary: Summary,
     all_rows: list[ResultRow],
-    all_stats: list[dict[str, int | float | str | None]],
+    all_stats: list[RunStats],
     timed_out_runs: list[int],
     truncated_runs: list[int],
     output_file: str,
