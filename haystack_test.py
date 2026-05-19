@@ -772,7 +772,7 @@ def _print_message(msg: Message, is_full: bool) -> None:
 
 def run_single_experiment(
     run_index: int, config: Config, seed: int, show: str | None = None
-) -> tuple[list[ResultRow], str, dict[str, int | float | str | None]]:
+) -> tuple[list[ResultRow], str, RunStats]:
     """Run one complete experiment: generate, query, score, return rows.
 
     Args:
@@ -1002,7 +1002,7 @@ def main() -> None:
                 print(f"model={model_name}, "
                       f"accuracy={correct_count}/{len(rows)} "
                       f"({100*correct_count/len(rows):.1f}%) "
-                      f"tokens={stats['total_tokens']} "
+                      f"tokens={stats.get('total_tokens', 0)} "
                       f"avg_lat={avg_lat:.0f}ms"
                       + (f" tps={tps:.1f}" if tps else ""))
             else:
@@ -1108,8 +1108,8 @@ def _print_summary(
     total = len(all_rows)
     correct = sum(1 for r in all_rows if r.correct == 1)
     if total > 0:
-        total_tokens = sum(float(s["total_tokens"] or 0) for s in all_stats)
-        total_latency = sum(float(s["total_latency_ms"] or 0) for s in all_stats)
+        total_tokens = sum(float(s.get("total_tokens") or 0) for s in all_stats)
+        total_latency = sum(float(s.get("total_latency_ms") or 0) for s in all_stats)
         total_completion = sum(float(s.get("total_completion") or 0) for s in all_stats)
         print("\nOverall results:")
         print(f"  Accuracy:            {correct}/{total} ({100*correct/total:.1f}%)")
