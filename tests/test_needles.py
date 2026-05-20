@@ -9,7 +9,7 @@ from haystack_test import (
     resolve_distractors_num,
     select_needles,
     shake_positions,
-    validate_generation_params,
+    validate_params,
 )
 
 
@@ -151,6 +151,9 @@ VALIDATION_CASES = [
     ({"distractor_pct": 1.0}, "distractor_pct must be in"),
     ({"distractor_pct": 1.5}, "distractor_pct must be in"),
     ({"val_min": 99999, "val_max": 10000}, "val_min.*> val_max"),
+    ({"fuzz": -0.1}, "fuzz must be in"),
+    ({"fuzz": 0.5}, "fuzz must be in"),
+    ({"fuzz": 0.9}, "fuzz must be in"),
 ]
 
 
@@ -167,7 +170,7 @@ class TestValidation:
         for k, v in overrides.items():
             setattr(config, k, v)
         with pytest.raises(ValueError, match=expected_msg):
-            validate_generation_params(config)
+            validate_params(config)
 
     def test_valid_no_distractors(self):
         config = Config(
@@ -177,7 +180,7 @@ class TestValidation:
             distractor_pct=None, distractors_num=0,
             temperature=0.0, max_tokens=240000, timeout=7200, full=False,
         )
-        validate_generation_params(config)
+        validate_params(config)
 
     def test_valid_pct_only(self):
         config = Config(
@@ -187,7 +190,7 @@ class TestValidation:
             distractor_pct=0.1, distractors_num=None,
             temperature=0.0, max_tokens=240000, timeout=7200, full=False,
         )
-        validate_generation_params(config)
+        validate_params(config)
 
     def test_valid_num_only(self):
         config = Config(
@@ -197,7 +200,7 @@ class TestValidation:
             distractor_pct=None, distractors_num=10,
             temperature=0.0, max_tokens=240000, timeout=7200, full=False,
         )
-        validate_generation_params(config)
+        validate_params(config)
 
 
 
@@ -445,17 +448,20 @@ class TestShakePositions:
         result2 = shake_positions(base2, 0.49)
         assert result1 != result2
 
-    def test_fuzz_negative_returns_unchanged(self):
+    def test_fuzz_negative_raises(self):
         base = pick_needle_positions(100, 10)
-        result = shake_positions(base, -0.1)
-        assert result == base
+        with pytest.raises(ValueError, match="fuzz_pct must be in"):
+            shake_positions(base, -0.1)
 
-    def test_fuzz_above_threshold_returns_unchanged(self):
+    def test_fuzz_at_threshold_raises(self):
         base = pick_needle_positions(100, 10)
-        result = shake_positions(base, 0.5)
-        assert result == base
-        result = shake_positions(base, 1.0)
-        assert result == base
+        with pytest.raises(ValueError, match="fuzz_pct must be in"):
+            shake_positions(base, 0.5)
+
+    def test_fuzz_above_threshold_raises(self):
+        base = pick_needle_positions(100, 10)
+        with pytest.raises(ValueError, match="fuzz_pct must be in"):
+            shake_positions(base, 1.0)
 
     def test_fuzz_with_single_needle(self, seeded_random):
         seeded_random(42)

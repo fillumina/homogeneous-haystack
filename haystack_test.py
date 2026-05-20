@@ -202,9 +202,8 @@ def shake_positions(positions: list[int], fuzz_pct: float) -> list[int]:
     Each position is shifted by ±(step * fuzz_pct), clamped to [0, max(positions)].
     The jitter is capped at fuzz_pct < 0.5 to guarantee no collisions:
     int() truncation ensures fuzz_abs < step/2, so two adjacent positions can never
-    land on the same value or swap order. If fuzz_pct < 0 or >= 0.5, the original
-    list is returned unchanged. If fuzz_pct <= 0 or fewer than 2 positions, the
-    original list is returned unchanged.
+    land on the same value or swap order. If fuzz_pct <= 0 or fewer than 2 positions,
+    the original list is returned unchanged.
 
     Args:
         positions: Sorted list of positions to jitter.
@@ -213,9 +212,16 @@ def shake_positions(positions: list[int], fuzz_pct: float) -> list[int]:
     Returns:
         New list of jittered positions. Order is preserved (no sorting needed)
         because fuzz_abs < step/2 guarantees no position swaps or collisions.
+
+    Raises:
+        ValueError: If fuzz_pct is outside [0, 0.5). Must be validated via
+            validate_params() before calling this function.
     """
     if fuzz_pct < 0 or fuzz_pct >= 0.5:
-        return positions
+        raise ValueError(
+            f"fuzz_pct must be in [0, 0.5), got {fuzz_pct}. "
+            "Use validate_params() to catch invalid values before running."
+        )
     if fuzz_pct <= 0 or len(positions) < 2:
         return positions
 
@@ -227,7 +233,7 @@ def shake_positions(positions: list[int], fuzz_pct: float) -> list[int]:
     for p in positions:
         jitter = random.randint(-fuzz_abs, fuzz_abs)
         result.append(max(0, min(max_pos, p + jitter)))
-    return result  # sorted: order is guaranteed since fuzz_abs < step/2
+    return result  # order guaranteed since fuzz_abs < step/2
 
 
 def pick_needle_positions(n_total: int, n_needles: int) -> list[int]:
@@ -834,7 +840,7 @@ def run_single_experiment(
     return rows, model_name, stats
 
 
-def validate_generation_params(config: Config) -> None:
+def validate_params(config: Config) -> None:
     """Validate parameters for haystack and needle generation.
 
     Args:
@@ -844,7 +850,7 @@ def validate_generation_params(config: Config) -> None:
         ValueError: If any parameter is invalid (haystack_num < 1,
             needles_num < 1, distractor_pct out of range, key_len < 1,
             distractors_num < 0, distractors_num and distractor_pct both set,
-            or val_min > val_max).
+            val_min > val_max, or fuzz out of range).
     """
     if config.haystack_num < 1:
         raise ValueError(f"haystack_num must be >= 1, got {config.haystack_num}")
@@ -866,6 +872,11 @@ def validate_generation_params(config: Config) -> None:
         raise ValueError(f"key_len must be >= 1, got {config.key_len}")
     if config.val_min > config.val_max:
         raise ValueError(f"val_min ({config.val_min}) > val_max ({config.val_max})")
+    if config.fuzz < 0 or config.fuzz >= 0.5:
+        raise ValueError(
+            f"fuzz must be in [0, 0.5), got {config.fuzz}. "
+            "Values >= 0.5 risk needle position collisions."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -943,7 +954,7 @@ def main() -> None:
         fuzz=args.fuzz,
     )
 
-    validate_generation_params(config)
+    validate_params(config)
 
     seed = args.seed if args.seed is not None else secrets.randbits(31)
     actual_real_needles = min(args.haystack_num, args.needles_num)
