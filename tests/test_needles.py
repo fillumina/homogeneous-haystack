@@ -417,53 +417,50 @@ class TestShakePositions:
     def test_fuzz_positions_in_range(self, seeded_random):
         seeded_random(42)
         base = pick_needle_positions(100, 10)
-        result = shake_positions(base, 0.5)
+        result = shake_positions(base, 0.49)
         for pos in result:
             assert 0 <= pos < 100
 
     def test_fuzz_positions_still_sorted(self, seeded_random):
         seeded_random(42)
         base = pick_needle_positions(100, 10)
-        result = shake_positions(base, 0.5)
+        result = shake_positions(base, 0.49)
         assert result == sorted(result)
 
-    def test_fuzz_positions_unique(self, seeded_random):
-        seeded_random(42)
-        base = pick_needle_positions(100, 10)
-        result = shake_positions(base, 0.5)
-        assert len(result) == len(set(result))
-
-    def test_fuzz_large_does_not_deduplicate_all(self, seeded_random):
-        seeded_random(42)
-        base = pick_needle_positions(1000, 10)
-        result = shake_positions(base, 0.5)
-        assert len(result) == 10
+    def test_fuzz_no_collisions(self, seeded_random):
+        # fuzz < 0.5 + int() truncation guarantees no duplicates
+        for _ in range(1000):
+            base = pick_needle_positions(1000, 50)
+            result = shake_positions(base, 0.49)
+            assert len(result) == len(set(result)), (
+                f"Collision detected: {base} -> {result}"
+            )
 
     def test_fuzz_positions_are_randomized(self, seeded_random):
         seeded_random(42)
         base1 = pick_needle_positions(100, 10)
-        result1 = shake_positions(base1, 0.5)
+        result1 = shake_positions(base1, 0.49)
         seeded_random(99)
         base2 = pick_needle_positions(100, 10)
-        result2 = shake_positions(base2, 0.5)
+        result2 = shake_positions(base2, 0.49)
         assert result1 != result2
 
-    def test_fuzz_boundary_clamp_low(self):
-        # With 100% fuzz, all positions should be clamped to valid range
-        base = pick_needle_positions(10, 2)
-        result = shake_positions(base, 1.0)
-        assert all(0 <= p < 10 for p in result)
-        assert len(result) == 2
+    def test_fuzz_negative_returns_unchanged(self):
+        base = pick_needle_positions(100, 10)
+        result = shake_positions(base, -0.1)
+        assert result == base
 
-    def test_fuzz_boundary_clamp_high(self):
-        base = pick_needle_positions(10, 2)
+    def test_fuzz_above_threshold_returns_unchanged(self):
+        base = pick_needle_positions(100, 10)
+        result = shake_positions(base, 0.5)
+        assert result == base
         result = shake_positions(base, 1.0)
-        assert all(p < 10 for p in result)
+        assert result == base
 
     def test_fuzz_with_single_needle(self, seeded_random):
         seeded_random(42)
         base = pick_needle_positions(100, 1)
-        result = shake_positions(base, 0.5)
+        result = shake_positions(base, 0.49)
         assert len(result) == 1
         assert 0 <= result[0] < 100
 
@@ -472,7 +469,67 @@ class TestShakePositions:
         original = base.copy()
         import random
         random.seed(42)
-        result = shake_positions(base, 0.5)
-        # Base should not be mutated
+        result = shake_positions(base, 0.49)
         assert base == original
         assert result is not base
+
+
+class TestDenseNeedlesSkipFuzz:
+    def test_fuzz_skipped_when_needles_exceed_haystack_times_two(self, seeded_random):
+        seeded_random(42)
+        haystack_num = 10
+        needles_num = 25  # > 10 * 2
+        _, _, needles = generate_haystack_and_needles(
+            haystack_num=haystack_num,
+            needles_num=needles_num,
+            distractor_pct=None,
+            distractors_num=0,
+            key_len=8,
+            val_min=10000,
+            val_max=99999,
+            fuzz=0.49,
+        )
+        real = [n for n in needles if not n.is_distractor]
+        # With no fuzz, positions should be evenly spaced (or all positions)
+        assert len(real) == 10
+        indices = sorted(n.index for n in real)
+        # All positions should be used (0..9) since needles > haystack
+        assert indices == list(range(10))
+
+    def test_fuzz_applied_when_needles_below_threshold(self, seeded_random):
+        seeded_random(42)
+        haystack_num = 100
+        needles_num = 100  # = 100 * 1, below threshold
+        _, _, needles = generate_haystack_and_needles(
+            haystack_num=haystack_num,
+            needles_num=needles_num,
+            distractor_pct=None,
+            distractors_num=0,
+            key_len=8,
+            val_min=10000,
+            val_max=99999,
+            fuzz=0.49,
+        )
+        real = [n for n in needles if not n.is_distractor]
+        assert len(real) == 100
+        indices = [n.index for n in real]
+        # With fuzz, positions should not be perfectly evenly spaced
+        diffs = [indices[i+1] - indices[i] for i in range(len(indices)-1)]
+        assert max(diffs) - min(diffs) > 1
+
+    def test_fuzz_applied_when_needles_equal_to_haystack_times_two(self, seeded_random):
+        seeded_random(42)
+        haystack_num = 50
+        needles_num = 100  # = 50 * 2, exactly at threshold — fuzz still applies
+        _, _, needles = generate_haystack_and_needles(
+            haystack_num=haystack_num,
+            needles_num=needles_num,
+            distractor_pct=None,
+            distractors_num=0,
+            key_len=8,
+            val_min=10000,
+            val_max=99999,
+            fuzz=0.49,
+        )
+        real = [n for n in needles if not n.is_distractor]
+        assert len(real) == 50

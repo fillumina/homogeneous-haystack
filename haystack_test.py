@@ -117,7 +117,7 @@ class Config:
     max_tokens: int
     timeout: int
     full: bool
-    fuzz: float = 0.5
+    fuzz: float = 0.49
 
 
 @dataclass
@@ -199,17 +199,23 @@ def resolve_distractors_num(
 def shake_positions(positions: list[int], fuzz_pct: float) -> list[int]:
     """Add random jitter to each position as a fraction of the step size.
 
-    Each position is shifted by ±(step * fuzz_pct), clamped to [0, max(positions)],
-    then deduplicated and re-sorted. If fuzz_pct <= 0 or fewer than 2 positions,
-    the original list is returned unchanged.
+    Each position is shifted by ±(step * fuzz_pct), clamped to [0, max(positions)].
+    The jitter is capped at fuzz_pct < 0.5 to guarantee no collisions:
+    int() truncation ensures fuzz_abs < step/2, so two adjacent positions can never
+    land on the same value or swap order. If fuzz_pct < 0 or >= 0.5, the original
+    list is returned unchanged. If fuzz_pct <= 0 or fewer than 2 positions, the
+    original list is returned unchanged.
 
     Args:
         positions: Sorted list of positions to jitter.
-        fuzz_pct: Fraction of the step size to use as jitter range (0.0-1.0).
+        fuzz_pct: Fraction of the step size to use as jitter range (0.0-0.5 exclusive).
 
     Returns:
-        New list of jittered, deduplicated, sorted positions.
+        New list of jittered positions. Order is preserved (no sorting needed)
+        because fuzz_abs < step/2 guarantees no position swaps or collisions.
     """
+    if fuzz_pct < 0 or fuzz_pct >= 0.5:
+        return positions
     if fuzz_pct <= 0 or len(positions) < 2:
         return positions
 
@@ -221,7 +227,7 @@ def shake_positions(positions: list[int], fuzz_pct: float) -> list[int]:
     for p in positions:
         jitter = random.randint(-fuzz_abs, fuzz_abs)
         result.append(max(0, min(max_pos, p + jitter)))
-    return sorted(set(result))
+    return result  # sorted: order is guaranteed since fuzz_abs < step/2
 
 
 def pick_needle_positions(n_total: int, n_needles: int) -> list[int]:
@@ -288,14 +294,15 @@ def create_distractor_keys(
 def select_needles(
     pairs: list[HaystackPair],
     n_needles: int,
-    fuzz: float = 0.5,
+    fuzz: float = 0.49,
 ) -> list[Needle]:
     """Select real needles from haystack at uniformly spaced intervals.
 
     Args:
         pairs: List of all haystack key-value pairs.
         n_needles: Number of needles to extract from the haystack.
-        fuzz: Fraction of the step size to jitter each needle position by (default: 0.5).
+        fuzz: Fraction of the step size to jitter each needle position by (default: 0.49).
+              Values >= 0.5 are silently skipped to avoid position collisions.
 
     Returns:
         List of Needle objects extracted from the haystack positions.
@@ -326,7 +333,7 @@ def generate_haystack_and_needles(
     key_len: int,
     val_min: int,
     val_max: int,
-    fuzz: float = 0.5,
+    fuzz: float = 0.49,
 ) -> tuple[str, list[HaystackPair], list[Needle]]:
     """Generate haystack text, pair list, and shuffled needles.
 
@@ -338,7 +345,8 @@ def generate_haystack_and_needles(
         key_len: Length of random keys in characters.
         val_min: Minimum value for generated values.
         val_max: Maximum value for generated values.
-        fuzz: Fraction of the step size to jitter each needle position by (default: 0.5).
+        fuzz: Fraction of the step size to jitter each needle position by (default: 0.49).
+              Fuzz is skipped entirely when needles_num > haystack_num * 2.
 
     Returns:
         A tuple of (haystack_text, pairs, shuffled_needles).
@@ -350,7 +358,10 @@ def generate_haystack_and_needles(
     )
 
     # Select real needles from haystack at fixed intervals
-    real_needles = select_needles(pairs, needles_num, fuzz)
+    # Skip fuzz when needles are denser than 2 per haystack position —
+    # positions are already fully packed, jitter would only cause collisions.
+    effective_fuzz = 0.0 if needles_num > haystack_num * 2 else fuzz
+    real_needles = select_needles(pairs, needles_num, effective_fuzz)
 
     # Compute number of distractors needed
     n_distractor = resolve_distractors_num(len(real_needles), distractors_num, distractor_pct)
@@ -905,8 +916,8 @@ def main() -> None:
                         help="Number of independent runs (default: 1)")
     parser.add_argument("--seed", type=int, default=None,
                         help="Base random seed (random if omitted)")
-    parser.add_argument("--fuzz", type=float, default=0.5,
-                        help="Jitter needle positions as fraction of step size (default: 0.5 = 50%%)")
+    parser.add_argument("--fuzz", type=float, default=0.49,
+                        help="Jitter needle positions as fraction of step size (default: 0.49)")
     parser.add_argument("--output", default="results.csv",
                         help="Output CSV path (default: results.csv)")
 

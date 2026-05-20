@@ -60,7 +60,7 @@ python haystack_test.py --haystack-num 5000 --needles-num 100 --repeat 3
 | `--timeout`         | `7200`                                      | Request timeout in seconds                                               |
 | `--repeat`          | `1`                                         | Number of independent runs                                               |
 | `--seed`            | Random                                      | Base random seed for reproducibility                                     |
-| `--fuzz`            | `0.5`                                       | Jitter needle positions as fraction of step size (0 to disable)          |
+| `--fuzz`            | `0.49`                                      | Jitter needle positions as fraction of step size (0 to disable)          |
 | `--output`          | `results.csv`                               | Output CSV path                                                          |
 | `--show`            | —                                           | Print prompt/response for debugging (`prompt`, `response`, or `all`)     |
 | `--full`            | —                                           | Print full untruncated prompt and response                               |
@@ -78,7 +78,7 @@ python haystack_test.py \
 
 ### Needle position jitter (`--fuzz`)
 
-By default, needles are placed at evenly spaced positions with 50% random jitter (`--fuzz 0.5`). This breaks the artificial periodicity while preserving even coverage across the context window. Set `--fuzz 0` to use fixed equally-spaced positions, or tune the value to control the jitter magnitude. The jitter range is a fraction of the step size between consecutive needles. Using this technique, while making the test even more resistant to spurious optimizations, can have a minor effect on repeatability so it's better to repeat the test several times for true consistent results.
+By default, needles are placed at evenly spaced positions with 49% random jitter (`--fuzz 0.49`). This breaks the artificial periodicity while preserving even coverage across the context window. The 49% value (combined with integer truncation) guarantees no position collisions: two adjacent needles can never jitter to the same slot. Set `--fuzz 0` to use fixed equally-spaced positions, or tune the value to control the jitter magnitude. Fuzz is automatically disabled when `--needles-num` exceeds twice `--haystack-num` (positions are already fully packed). Using this technique, while making the test even more resistant to spurious optimizations, can have a minor effect on repeatability so it's better to repeat the test several times for true consistent results.
 
 ## Output
 

@@ -5,7 +5,7 @@ from haystack_test import Config, ResultRow, run_single_experiment
 
 
 class TestRunSingleExperiment:
-    def _make_config(self, max_tokens=240000, fuzz=0.5):
+    def _make_config(self, max_tokens=240000, fuzz=0.49):
         return Config(
             endpoint="http://localhost:8080/v1/chat/completions",
             model=None,
