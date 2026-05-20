@@ -1,4 +1,3 @@
-import pytest
 
 from haystack_test import _truncate
 
@@ -56,8 +55,6 @@ class TestTruncate:
         lines = [f"line{i}" for i in range(20)]
         text = "\n".join(lines)
         result = _truncate(text, max_lines=5)
-        first_part = result.split("\n")[0]
-        # First 5 lines should be present
         for i in range(5):
             assert f"line{i}" in result
 

@@ -23,7 +23,7 @@ class TestBuildHaystack:
     def test_correct_number_of_lines(self, n, seeded_random):
         seeded_random(42)
         text, _ = build_haystack(n)
-        lines = [l for l in text.strip().split("\n") if l]
+        lines = [line for line in text.strip().split("\n") if line]
         assert len(lines) == n
 
     def test_format_is_key_equals_value(self, seeded_random):

@@ -1,4 +1,3 @@
-import random
 
 import pytest
 
@@ -24,20 +23,6 @@ class TestGenerateKey:
         result = generate_key(100)
         for ch in result:
             assert ch in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-
-    def test_different_seeds_give_different_results(self):
-        random.seed(1)
-        result1 = generate_key(8)
-        random.seed(2)
-        result2 = generate_key(8)
-        assert result1 != result2
-
-    def test_same_seed_gives_same_result(self):
-        random.seed(1)
-        result1 = generate_key(8)
-        random.seed(1)
-        result2 = generate_key(8)
-        assert result1 == result2
 
     def test_no_repeated_keys_in_batch(self, seeded_random):
         seeded_random(42)

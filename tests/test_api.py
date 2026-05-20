@@ -6,34 +6,12 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 from haystack_test import (
-    ApiUsage,
     Config,
     HaystackQueryError,
     Needle,
     _query_batch,
-    extract_model_name,
     query_llama,
 )
-
-
-class TestExtractModelName:
-    def test_returns_model_from_response(self):
-        response = {"model": "gpt-4", "choices": []}
-        assert extract_model_name(response) == "gpt-4"
-
-    def test_returns_unknown_when_model_missing(self):
-        response = {"choices": []}
-        assert extract_model_name(response) == "unknown"
-
-    def test_returns_unknown_for_empty_response(self):
-        response = {}
-        assert extract_model_name(response) == "unknown"
-
-    def test_handles_none_model_value(self):
-        response = {"model": None, "choices": []}
-        # None is falsy but not the key "unknown"
-        result = extract_model_name(response)
-        assert result is None
 
 
 class TestQueryLlama:

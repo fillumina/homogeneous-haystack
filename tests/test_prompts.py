@@ -1,7 +1,5 @@
-import pytest
 
 from haystack_test import (
-    Needle,
     build_prompt,
     SYSTEM_PROMPT,
 )

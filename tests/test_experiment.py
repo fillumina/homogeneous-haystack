@@ -1,8 +1,7 @@
 from unittest.mock import Mock, patch
 
-import pytest
 
-from haystack_test import Config, ResultRow, RunStats, run_single_experiment
+from haystack_test import Config, ResultRow, run_single_experiment
 
 
 class TestRunSingleExperiment:

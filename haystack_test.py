@@ -180,14 +180,6 @@ def build_haystack(
 # Needle selection
 # ---------------------------------------------------------------------------
 
-def count_real_needles(haystack_num: int, needles_num: int) -> int:
-    """Return the number of real needles that fit in the haystack.
-
-    When needles_num exceeds haystack_num, only haystack_num needles can be placed.
-    """
-    return min(haystack_num, needles_num)
-
-
 def resolve_distractors_num(
     real_needles: int,
     distractors_num: int | None,
@@ -361,12 +353,7 @@ def generate_haystack_and_needles(
     real_needles = select_needles(pairs, needles_num, fuzz)
 
     # Compute number of distractors needed
-    if distractors_num is not None:
-        n_distractor = distractors_num
-    elif distractor_pct is not None:
-        n_distractor = int(len(real_needles) * distractor_pct)
-    else:
-        n_distractor = int(len(real_needles) * 0.08)
+    n_distractor = resolve_distractors_num(len(real_needles), distractors_num, distractor_pct)
 
     # Create distractor needles (keys not in haystack)
     distractor_needles = create_distractor_keys(
@@ -478,18 +465,6 @@ def query_llama(
 
 class HaystackQueryError(Exception):
     pass
-
-
-def extract_model_name(response: ApiResponseBody) -> str:
-    """Extract model name from OpenAI-compatible API response.
-
-    Args:
-        response: The API response body.
-
-    Returns:
-        The model name, or "unknown" if not present.
-    """
-    return response.get("model", "unknown")
 
 
 # ---------------------------------------------------------------------------
@@ -618,13 +593,13 @@ def _query_batch(
             max_tokens=config.max_tokens,
             timeout=config.timeout,
         )
-        model_name = extract_model_name(raw_response)
+        model_name = raw_response.get("model", "unknown") or "unknown"  # type: ignore[union-attr]
         response_text = raw_response["choices"][0]["message"].get("content", "")  # type: ignore[typeddict-item]
         usage = raw_response.get("usage")
         error = None
         truncated = (
             usage is not None
-            and usage.get("completion_tokens") == config.max_tokens
+            and usage.get("completion_tokens") == config.max_tokens  # type: ignore[attr-defined]
         )
     except HaystackQueryError as e:
         raw_response = None
@@ -636,7 +611,7 @@ def _query_batch(
         truncated = False
 
     parsed = parse_response(response_text, needle_keys) if error is None else {}
-    return parsed, messages, response_text, raw_response, model_name, usage, latency_ms, error, truncated
+    return parsed, messages, response_text, raw_response, model_name, usage, latency_ms, error, truncated  # type: ignore[return-value]
 
 
 def _build_rows(
@@ -718,15 +693,15 @@ def _print_results(
             _print_message(msg, is_full)
 
     if (show in ("response", "all") or is_full):
-        print(f"\n--- RAW RESPONSE (JSON) ---")
+        print("\n--- RAW RESPONSE (JSON) ---")
         if raw_response is not None:
             print(json.dumps(raw_response, indent=2, default=str))
         else:
             print("(no response received)")
-        print(f"\n--- CONTENT FIELD ---")
+        print("\n--- CONTENT FIELD ---")
         print(repr(response_text))
 
-    print(f"\n--- PARSED RESULTS ---")
+    print("\n--- PARSED RESULTS ---")
     scored = list(score_needles(needles, parsed))
     real_needles = []
     distractor_needles = []
@@ -960,7 +935,7 @@ def main() -> None:
     validate_generation_params(config)
 
     seed = args.seed if args.seed is not None else secrets.randbits(31)
-    actual_real_needles = count_real_needles(args.haystack_num, args.needles_num)
+    actual_real_needles = min(args.haystack_num, args.needles_num)
     actual_distractors = resolve_distractors_num(
         actual_real_needles, args.distractors_num, args.distractor_pct
     )
@@ -1096,7 +1071,7 @@ def _print_summary(
             if error:
                 print(f"  Status:    ERROR ({error})")
             elif truncated:
-                print(f"  Status:    OUTPUT TRUNCATED")
+                print("  Status:    OUTPUT TRUNCATED")
             else:
                 print(f"  Tokens:    {total_tokens}")
                 print(f"  Avg Lat:   {avg_lat:.0f}ms")
@@ -1108,16 +1083,16 @@ def _print_summary(
     total = len(all_rows)
     correct = sum(1 for r in all_rows if r.correct == 1)
     if total > 0:
-        total_tokens = sum(float(s.get("total_tokens") or 0) for s in all_stats)
-        total_latency = sum(float(s.get("total_latency_ms") or 0) for s in all_stats)
-        total_completion = sum(float(s.get("total_completion") or 0) for s in all_stats)
+        total_tokens_all = sum((float(s.get("total_tokens") or 0) for s in all_stats), 0.0)
+        total_latency_all = sum((float(s.get("total_latency_ms") or 0) for s in all_stats), 0.0)
+        total_completion_all = sum((float(s.get("total_completion") or 0) for s in all_stats), 0.0)
         print("\nOverall results:")
         print(f"  Accuracy:            {correct}/{total} ({100*correct/total:.1f}%)")
-        print(f"  Total tokens:        {total_tokens}")
-        print(f"  Total latency:       {total_latency:.0f}ms"
-              + (f" ({total_latency/60000:.1f} min)" if total_latency > 60000 else ""))
-        if total_latency > 0:
-            print(f"  Avg tokens/sec:      {total_completion/(total_latency/1000):.1f}")
+        print(f"  Total tokens:        {total_tokens_all}")
+        print(f"  Total latency:       {total_latency_all:.0f}ms"
+              + (f" ({total_latency_all/60000:.1f} min)" if total_latency_all > 60000 else ""))
+        if total_latency_all > 0:
+            print(f"  Avg tokens/sec:      {total_completion_all/(total_latency_all/1000):.1f}")
 
     # Issues
     if timed_out_runs or truncated_runs:

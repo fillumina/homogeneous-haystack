@@ -3,7 +3,6 @@ import pytest
 from haystack_test import (
     Config,
     Needle,
-    count_real_needles,
     create_distractor_keys,
     generate_haystack_and_needles,
     pick_needle_positions,
@@ -79,7 +78,6 @@ class TestSelectNeedles:
 
     def test_distractor_needles_separate(self, haystack_pairs):
         """Distractors are created by create_distractor_keys, not select_needles."""
-        from haystack_test import create_distractor_keys
         _, pairs = haystack_pairs
         real = select_needles(pairs, 20)
         distractors = create_distractor_keys(pairs, 5, 20, 8)
@@ -99,7 +97,6 @@ class TestSelectNeedles:
             assert needle.is_distractor is False
 
     def test_distractor_needles_have_none_expected(self, haystack_pairs):
-        from haystack_test import create_distractor_keys
         _, pairs = haystack_pairs
         distractors = create_distractor_keys(pairs, 10, 20, 8)
         for needle in distractors:
@@ -119,7 +116,6 @@ class TestSelectNeedles:
             assert 0 <= needle.index < len(pairs)
 
     def test_distractor_keys_not_in_haystack(self, haystack_pairs, haystack_keys):
-        from haystack_test import create_distractor_keys
         _, pairs = haystack_pairs
         distractors = create_distractor_keys(pairs, 5, 20, 8)
         for needle in distractors:
@@ -140,6 +136,68 @@ class TestSelectNeedles:
             assert hasattr(needle, "key")
             assert hasattr(needle, "expected")
             assert hasattr(needle, "is_distractor")
+
+
+VALIDATION_CASES = [
+    ({"distractor_pct": 0.1, "distractors_num": 5}, "cannot both be set"),
+    ({"distractors_num": -1}, "distractors_num must be >= 0"),
+    ({"haystack_num": 0}, "haystack_num must be >= 1"),
+    ({"haystack_num": -1}, "haystack_num must be >= 1"),
+    ({"needles_num": 0}, "needles_num must be >= 1"),
+    ({"needles_num": -5}, "needles_num must be >= 1"),
+    ({"key_len": 0}, "key_len must be >= 1"),
+    ({"key_len": -3}, "key_len must be >= 1"),
+    ({"distractor_pct": -0.1}, "distractor_pct must be in"),
+    ({"distractor_pct": 1.0}, "distractor_pct must be in"),
+    ({"distractor_pct": 1.5}, "distractor_pct must be in"),
+    ({"val_min": 99999, "val_max": 10000}, "val_min.*> val_max"),
+]
+
+
+class TestValidation:
+    @pytest.mark.parametrize("overrides, expected_msg", VALIDATION_CASES)
+    def test_invalid_params_raise(self, overrides, expected_msg):
+        config = Config(
+            endpoint="http://localhost:8080/v1/chat/completions",
+            model=None, key_len=8, val_min=10000, val_max=99999,
+            haystack_num=100, needles_num=50,
+            distractor_pct=None, distractors_num=None,
+            temperature=0.0, max_tokens=240000, timeout=7200, full=False,
+        )
+        for k, v in overrides.items():
+            setattr(config, k, v)
+        with pytest.raises(ValueError, match=expected_msg):
+            validate_generation_params(config)
+
+    def test_valid_no_distractors(self):
+        config = Config(
+            endpoint="http://localhost:8080/v1/chat/completions",
+            model=None, key_len=8, val_min=10000, val_max=99999,
+            haystack_num=100, needles_num=50,
+            distractor_pct=None, distractors_num=0,
+            temperature=0.0, max_tokens=240000, timeout=7200, full=False,
+        )
+        validate_generation_params(config)
+
+    def test_valid_pct_only(self):
+        config = Config(
+            endpoint="http://localhost:8080/v1/chat/completions",
+            model=None, key_len=8, val_min=10000, val_max=99999,
+            haystack_num=100, needles_num=50,
+            distractor_pct=0.1, distractors_num=None,
+            temperature=0.0, max_tokens=240000, timeout=7200, full=False,
+        )
+        validate_generation_params(config)
+
+    def test_valid_num_only(self):
+        config = Config(
+            endpoint="http://localhost:8080/v1/chat/completions",
+            model=None, key_len=8, val_min=10000, val_max=99999,
+            haystack_num=100, needles_num=50,
+            distractor_pct=None, distractors_num=10,
+            temperature=0.0, max_tokens=240000, timeout=7200, full=False,
+        )
+        validate_generation_params(config)
 
 
 
@@ -311,307 +369,6 @@ class TestDistractorsNum:
         )
         distractors = [n for n in needles if n.is_distractor]
         assert len(distractors) == 2
-
-
-class TestValidation:
-    def test_both_distractor_options_set_raises(self):
-        config = Config(
-            endpoint="http://localhost:8080/v1/chat/completions",
-            model=None,
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            haystack_num=100,
-            needles_num=50,
-            distractor_pct=0.1,
-            distractors_num=5,
-            temperature=0.0,
-            max_tokens=240000,
-            timeout=7200,
-            full=False,
-        )
-        with pytest.raises(ValueError, match="cannot both be set"):
-            validate_generation_params(config)
-
-    def test_negative_distractors_num_raises(self):
-        config = Config(
-            endpoint="http://localhost:8080/v1/chat/completions",
-            model=None,
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            haystack_num=100,
-            needles_num=50,
-            distractor_pct=None,
-            distractors_num=-1,
-            temperature=0.0,
-            max_tokens=240000,
-            timeout=7200,
-            full=False,
-        )
-        with pytest.raises(ValueError, match="distractors_num must be >= 0"):
-            validate_generation_params(config)
-
-    def test_valid_no_distractors(self):
-        config = Config(
-            endpoint="http://localhost:8080/v1/chat/completions",
-            model=None,
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            haystack_num=100,
-            needles_num=50,
-            distractor_pct=None,
-            distractors_num=0,
-            temperature=0.0,
-            max_tokens=240000,
-            timeout=7200,
-            full=False,
-        )
-        validate_generation_params(config)
-
-    def test_valid_pct_only(self):
-        config = Config(
-            endpoint="http://localhost:8080/v1/chat/completions",
-            model=None,
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            haystack_num=100,
-            needles_num=50,
-            distractor_pct=0.1,
-            distractors_num=None,
-            temperature=0.0,
-            max_tokens=240000,
-            timeout=7200,
-            full=False,
-        )
-        validate_generation_params(config)
-
-    def test_valid_num_only(self):
-        config = Config(
-            endpoint="http://localhost:8080/v1/chat/completions",
-            model=None,
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            haystack_num=100,
-            needles_num=50,
-            distractor_pct=None,
-            distractors_num=10,
-            temperature=0.0,
-            max_tokens=240000,
-            timeout=7200,
-            full=False,
-        )
-        validate_generation_params(config)
-
-    def test_haystack_num_zero_raises(self):
-        config = Config(
-            endpoint="http://localhost:8080/v1/chat/completions",
-            model=None,
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            haystack_num=0,
-            needles_num=50,
-            distractor_pct=None,
-            distractors_num=None,
-            temperature=0.0,
-            max_tokens=240000,
-            timeout=7200,
-            full=False,
-        )
-        with pytest.raises(ValueError, match="haystack_num must be >= 1"):
-            validate_generation_params(config)
-
-    def test_haystack_num_negative_raises(self):
-        config = Config(
-            endpoint="http://localhost:8080/v1/chat/completions",
-            model=None,
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            haystack_num=-1,
-            needles_num=50,
-            distractor_pct=None,
-            distractors_num=None,
-            temperature=0.0,
-            max_tokens=240000,
-            timeout=7200,
-            full=False,
-        )
-        with pytest.raises(ValueError, match="haystack_num must be >= 1"):
-            validate_generation_params(config)
-
-    def test_needles_num_zero_raises(self):
-        config = Config(
-            endpoint="http://localhost:8080/v1/chat/completions",
-            model=None,
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            haystack_num=100,
-            needles_num=0,
-            distractor_pct=None,
-            distractors_num=None,
-            temperature=0.0,
-            max_tokens=240000,
-            timeout=7200,
-            full=False,
-        )
-        with pytest.raises(ValueError, match="needles_num must be >= 1"):
-            validate_generation_params(config)
-
-    def test_needles_num_negative_raises(self):
-        config = Config(
-            endpoint="http://localhost:8080/v1/chat/completions",
-            model=None,
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            haystack_num=100,
-            needles_num=-5,
-            distractor_pct=None,
-            distractors_num=None,
-            temperature=0.0,
-            max_tokens=240000,
-            timeout=7200,
-            full=False,
-        )
-        with pytest.raises(ValueError, match="needles_num must be >= 1"):
-            validate_generation_params(config)
-
-    def test_key_len_zero_raises(self):
-        config = Config(
-            endpoint="http://localhost:8080/v1/chat/completions",
-            model=None,
-            key_len=0,
-            val_min=10000,
-            val_max=99999,
-            haystack_num=100,
-            needles_num=50,
-            distractor_pct=None,
-            distractors_num=None,
-            temperature=0.0,
-            max_tokens=240000,
-            timeout=7200,
-            full=False,
-        )
-        with pytest.raises(ValueError, match="key_len must be >= 1"):
-            validate_generation_params(config)
-
-    def test_key_len_negative_raises(self):
-        config = Config(
-            endpoint="http://localhost:8080/v1/chat/completions",
-            model=None,
-            key_len=-3,
-            val_min=10000,
-            val_max=99999,
-            haystack_num=100,
-            needles_num=50,
-            distractor_pct=None,
-            distractors_num=None,
-            temperature=0.0,
-            max_tokens=240000,
-            timeout=7200,
-            full=False,
-        )
-        with pytest.raises(ValueError, match="key_len must be >= 1"):
-            validate_generation_params(config)
-
-    def test_distractor_pct_negative_raises(self):
-        config = Config(
-            endpoint="http://localhost:8080/v1/chat/completions",
-            model=None,
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            haystack_num=100,
-            needles_num=50,
-            distractor_pct=-0.1,
-            distractors_num=None,
-            temperature=0.0,
-            max_tokens=240000,
-            timeout=7200,
-            full=False,
-        )
-        with pytest.raises(ValueError, match="distractor_pct must be in"):
-            validate_generation_params(config)
-
-    def test_distractor_pct_one_raises(self):
-        config = Config(
-            endpoint="http://localhost:8080/v1/chat/completions",
-            model=None,
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            haystack_num=100,
-            needles_num=50,
-            distractor_pct=1.0,
-            distractors_num=None,
-            temperature=0.0,
-            max_tokens=240000,
-            timeout=7200,
-            full=False,
-        )
-        with pytest.raises(ValueError, match="distractor_pct must be in"):
-            validate_generation_params(config)
-
-    def test_distractor_pct_greater_than_one_raises(self):
-        config = Config(
-            endpoint="http://localhost:8080/v1/chat/completions",
-            model=None,
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            haystack_num=100,
-            needles_num=50,
-            distractor_pct=1.5,
-            distractors_num=None,
-            temperature=0.0,
-            max_tokens=240000,
-            timeout=7200,
-            full=False,
-        )
-        with pytest.raises(ValueError, match="distractor_pct must be in"):
-            validate_generation_params(config)
-
-    def test_val_min_greater_than_val_max_raises(self):
-        config = Config(
-            endpoint="http://localhost:8080/v1/chat/completions",
-            model=None,
-            key_len=8,
-            val_min=99999,
-            val_max=10000,
-            haystack_num=100,
-            needles_num=50,
-            distractor_pct=None,
-            distractors_num=None,
-            temperature=0.0,
-            max_tokens=240000,
-            timeout=7200,
-            full=False,
-        )
-        with pytest.raises(ValueError, match="val_min.*> val_max"):
-            validate_generation_params(config)
-
-
-class TestCountRealNeedles:
-    def test_normal_case(self):
-        assert count_real_needles(100, 10) == 10
-
-    def test_needles_exceed_haystack(self):
-        assert count_real_needles(10, 100) == 10
-
-    def test_equal(self):
-        assert count_real_needles(50, 50) == 50
-
-    def test_needles_zero(self):
-        assert count_real_needles(100, 0) == 0
-
-    def test_haystack_zero(self):
-        assert count_real_needles(0, 50) == 0
 
 
 class TestResolveDistractorsNum:

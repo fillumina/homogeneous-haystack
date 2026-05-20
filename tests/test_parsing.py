@@ -1,4 +1,3 @@
-import pytest
 
 from haystack_test import Needle, ScoredNeedle, parse_response, score_needles
 

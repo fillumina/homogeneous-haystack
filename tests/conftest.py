@@ -7,14 +7,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from haystack_test import (
-    generate_key,
-    generate_value,
     build_haystack,
-    pick_needle_positions,
     select_needles,
-    build_prompt,
-    parse_response,
-    score_needles,
     HaystackQueryError,
 )
 

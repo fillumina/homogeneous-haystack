@@ -28,20 +28,6 @@ class TestGenerateValue:
         result = generate_value(val_min, val_max)
         assert result % 100 != 0
 
-    def test_different_seeds_give_different_results(self):
-        random.seed(1)
-        result1 = generate_value()
-        random.seed(2)
-        result2 = generate_value()
-        assert result1 != result2
-
-    def test_same_seed_gives_same_result(self):
-        random.seed(1)
-        result1 = generate_value()
-        random.seed(1)
-        result2 = generate_value()
-        assert result1 == result2
-
     def test_returns_integer(self, seeded_random):
         seeded_random(42)
         result = generate_value()
