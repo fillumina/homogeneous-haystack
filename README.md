@@ -4,9 +4,9 @@ A needle-in-a-haystack benchmark for long-context retrieval evaluation, designed
 
 ## Motivation
 
-Standard needle-in-a-haystack tests embed semantically distinctive facts — sentences like *"The special magic number in the city of Paris is 7342"* — into natural prose. The needle stands out sharply against its surroundings. This creates a confound: attention mechanisms may weight the needle more heavily simply because it breaks the pattern, not because the model has genuine long-range retrieval capability. The result conflates true positional retrieval with sensitivity to semantic contrast and anomaly detection.
+Standard needle-in-a-haystack tests embed semantically distinctive facts — sentences like *"The special magic number in the city of Paris is 7342"* — into natural prose. The needle stands out sharply against its surroundings. This creates a confound: attention mechanisms may weight the needle more heavily simply because it breaks the pattern, not because the model has genuine long-range retrieval capability. The result conflates true positional retrieval with sensitivity to semantic contrast and anomaly detection. More than that the entire paragraph lasting several tokens points to that magic association creating a target much larger that just the number itself.
 
-This benchmark eliminates that confound by making every element in the context structurally identical. The haystack consists entirely of random `KEY = VALUE` pairs. There are no semantic outliers, no structural anomalies, no contrast signals. The only way for a model to correctly retrieve a queried value is to have genuinely attended to and retained that specific position in the context.
+This benchmark eliminates that confound by making every element in the context structurally and semantically identical. The haystack consists entirely of random `KEY = VALUE` pairs. There are no semantic outliers, no structural anomalies, no contrast signals. The only way for a model to correctly retrieve a queried value is to have genuinely attended to and retained that specific position in the context. To avoid letting the model optimize for keys at fixed positions it is even possible to shake the needle positions randomly (see `--fuzz`).
 
 For a detailed explanation of the methodology, design rationale, and comparison with standard NIAH, see [homogeneous_haystack_test.md](homogeneous_haystack_test.md).
 
@@ -78,7 +78,7 @@ python haystack_test.py \
 
 ### Needle position jitter (`--fuzz`)
 
-By default, needles are placed at evenly spaced positions with 50% random jitter (`--fuzz 0.5`). This breaks the artificial periodicity while preserving even coverage across the context window. Set `--fuzz 0` to use fixed equally-spaced positions, or tune the value to control the jitter magnitude. The jitter range is a fraction of the step size between consecutive needles.
+By default, needles are placed at evenly spaced positions with 50% random jitter (`--fuzz 0.5`). This breaks the artificial periodicity while preserving even coverage across the context window. Set `--fuzz 0` to use fixed equally-spaced positions, or tune the value to control the jitter magnitude. The jitter range is a fraction of the step size between consecutive needles. Using this technique, while making the test even more resistant to spurious optimizations, can have a minor effect on repeatability so it's better to repeat the test several times for true consistent results.
 
 ## Output
 
@@ -91,7 +91,3 @@ A summary is printed to stdout after each run, including per-needle accuracy, to
 ```bash
 uv run pytest
 ```
-
-## Project Name
-
-The name "homogeneous haystack test" refers to the core design principle: every element in the haystack is structurally homogeneous, eliminating contrast as a retrieval signal. The project directory is `HaystackTest` for brevity, but the full project name is **Homogeneous Haystack Test**.
