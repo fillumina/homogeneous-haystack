@@ -11,7 +11,7 @@ from haystack_test import (
     HaystackQueryError,
     Needle,
     QueryResult,
-    _query_batch,
+    query_model,
     query_llama,
 )
 
@@ -209,7 +209,7 @@ class TestQueryLlama:
                 )
 
 
-class TestQueryBatch:
+class TestQueryModel:
     def _make_mock_success_response(self, content="test answer"):
         return {
             "model": "test-model",
@@ -263,7 +263,7 @@ class TestQueryBatch:
         haystack_text = "ABCD1234 = 1234\nEFGH5678 = 5678"
         debug = DebugContext()
 
-        result = _query_batch(config, haystack_text, needles, debug)
+        result = query_model(config, haystack_text, needles, debug)
 
         assert isinstance(result, QueryResult)
         assert result.parsed == {"ABCD1234": "1234", "EFGH5678": "5678"}
@@ -281,7 +281,7 @@ class TestQueryBatch:
         debug = DebugContext()
 
         with pytest.raises(HaystackQueryError, match="API failed"):
-            _query_batch(config, haystack_text, needles, debug)
+            query_model(config, haystack_text, needles, debug)
 
     @patch("haystack_test.query_llama")
     def test_error_fills_model_name_in_debug(self, mock_query_llama):
@@ -293,7 +293,7 @@ class TestQueryBatch:
         debug = DebugContext()
 
         with pytest.raises(HaystackQueryError):
-            _query_batch(config, haystack_text, needles, debug)
+            query_model(config, haystack_text, needles, debug)
 
         # debug.model_name is NOT set on error (caller handles it)
         assert debug.model_name == ""
@@ -309,7 +309,7 @@ class TestQueryBatch:
         haystack_text = "ABCD1234 = 1234"
         debug = DebugContext()
 
-        result = _query_batch(config, haystack_text, needles, debug)
+        result = query_model(config, haystack_text, needles, debug)
 
         assert result.truncated is True
 
@@ -324,7 +324,7 @@ class TestQueryBatch:
         haystack_text = "ABCD1234 = 1234"
         debug = DebugContext()
 
-        result = _query_batch(config, haystack_text, needles, debug)
+        result = query_model(config, haystack_text, needles, debug)
 
         assert result.truncated is False
 
@@ -340,7 +340,7 @@ class TestQueryBatch:
         haystack_text = "ABCD1234 = 1234"
         debug = DebugContext()
 
-        _query_batch(config, haystack_text, needles, debug)
+        query_model(config, haystack_text, needles, debug)
 
         assert isinstance(debug.messages, list)
         assert len(debug.messages) == 2
@@ -358,7 +358,7 @@ class TestQueryBatch:
         haystack_text = "ABCD1234 = 1234"
         debug = DebugContext()
 
-        result = _query_batch(config, haystack_text, needles, debug)
+        result = query_model(config, haystack_text, needles, debug)
 
         assert result.usage is not None
         assert result.usage["total_tokens"] == 150
@@ -375,7 +375,7 @@ class TestQueryBatch:
         haystack_text = "ABCD1234 = 1234"
         debug = DebugContext()
 
-        _query_batch(config, haystack_text, needles, debug)
+        query_model(config, haystack_text, needles, debug)
 
         assert debug.response_text == "my custom response"
 
@@ -391,7 +391,7 @@ class TestQueryBatch:
         haystack_text = "ABCD1234 = 1234"
         debug = DebugContext()
 
-        _query_batch(config, haystack_text, needles, debug)
+        query_model(config, haystack_text, needles, debug)
 
         assert debug.raw_response is not None
         assert debug.raw_response["model"] == "test-model"

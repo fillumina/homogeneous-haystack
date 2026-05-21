@@ -635,7 +635,7 @@ def _truncate(text: str, max_lines: int = 5, prefix: str = "...") -> str:
     return f"{first}\n{prefix}\n{last}"
 
 
-def _query_batch(
+def query_model(
     config: Config,
     haystack_text: str,
     needles: list[Needle],
@@ -847,7 +847,7 @@ def run_single_experiment(
     debug = DebugContext()
 
     try:
-        result = _query_batch(config, haystack_text, needles, debug)
+        result = query_model(config, haystack_text, needles, debug)
     except HaystackQueryError as e:
         debug.record_error(str(e))
         stats: RunStats = {
