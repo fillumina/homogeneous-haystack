@@ -670,14 +670,18 @@ def query_model(
     model_name = raw_response.get("model", "unknown") or "unknown"  # type: ignore[union-attr]
     response_text = raw_response["choices"][0]["message"].get("content", "")  # type: ignore[typeddict-item]
     debug.record_query(messages, raw_response, response_text, model_name)
+
+    # Extract usage info if available (may be missing in error responses or older API versions)
     usage = raw_response.get("usage")
 
-    truncated = (
+    # Consider the output truncated if the completion_tokens equals max_tokens,
+    truncated: bool = (
         usage is not None
         and usage.get("completion_tokens") == config.max_tokens  # type: ignore[attr-defined]
     )
 
-    parsed = parse_response(debug.response_text, needle_keys)
+    # Parse the response text into a dict of key -> value for scoring.
+    parsed: dict[str,str] = parse_response(debug.response_text, needle_keys)
     return QueryResult(
         parsed=parsed,
         usage=usage,
@@ -846,24 +850,7 @@ def run_single_experiment(
 
     debug = DebugContext()
 
-    try:
-        result = query_model(config, haystack_text, needles, debug)
-    except HaystackQueryError as e:
-        debug.record_error(str(e))
-        stats: RunStats = {
-            "total_tokens": 0,
-            "total_latency_ms": 0,
-            "total_completion": 0,
-            "error": debug.error,
-            "truncated": False,
-            "model_name": "error",
-        }
-        print()
-        print("=" * 60)
-        print(f"Run {run_index} — {e}")
-        print("=" * 60)
-        print()
-        return [], "error", stats
+    result = query_model(config, haystack_text, needles, debug)
 
     rows = _build_rows(
         run_index, needles, pairs, result.parsed, result.usage, result.latency_ms
@@ -886,13 +873,7 @@ def run_single_experiment(
         total_latency / len(needles), 1
     ) if needles else 0.0
 
-    if result.truncated:
-        print()
-        print("=" * 60)
-        print(f"Run {run_index} — OUTPUT TRUNCATED (completion_tokens reached max_tokens={config.max_tokens})")
-        print("=" * 60)
-        print()
-    elif show or is_full:
+    if show or is_full:
         _print_results(
             run_index, needles, pairs, result.parsed,
             show=show, is_full=is_full,
@@ -1026,7 +1007,6 @@ def main() -> None:
     actual_total = actual_real_needles + actual_distractors
     _print_config(config, seed, actual_real_needles, actual_distractors,
                  actual_total, args)
-    print()
 
     all_rows: list[ResultRow] = []
     all_stats: list[RunStats] = []
@@ -1056,6 +1036,13 @@ def main() -> None:
                       f"({100*correct_count/len(rows):.1f}%)")
             else:
                 print(f"model={model_name}, no results")
+        except HaystackQueryError as e:
+            timed_out_runs.append(run_idx + 1)
+            print()
+            print("=" * 60)
+            print(f"Run {run_idx + 1} — {e}")
+            print("=" * 60)
+            print()
         except Exception as e:
             print(f"FAILED: {e}", file=sys.stderr)
 
@@ -1098,6 +1085,7 @@ def _print_config(
           f"({actual_real_needles} real + {actual_distractors} distractors, "
           f"{pct*100:.0f}% distractors)")
     print(f"Output: {args.output}")
+    print()
 
 
 def _print_summary(

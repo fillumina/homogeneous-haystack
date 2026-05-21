@@ -1,3 +1,4 @@
+import pytest
 from unittest.mock import patch
 
 from haystack_test import Config, HaystackQueryError, ResultRow, run_single_experiment
@@ -66,15 +67,11 @@ class TestRunSingleExperiment:
         assert stats["avg_latency_ms"] > 0
 
     @patch("haystack_test.query_llama", side_effect=HaystackQueryError("API failed"))
-    def test_error_path_returns_empty_rows(self, mock_query_llama):
+    def test_error_path_raises(self, mock_query_llama):
         config = self._make_config()
-        rows, model_name, stats = run_single_experiment(1, config, 42)
 
-        assert rows == []
-        assert model_name == "error"
-        assert stats["error"] == "API failed"
-        assert stats["total_tokens"] == 0
-        assert stats["total_completion"] == 0
+        with pytest.raises(HaystackQueryError, match="API failed"):
+            run_single_experiment(1, config, 42)
 
     @patch("haystack_test.query_llama")
     def test_truncated_path_returns_rows(self, mock_query_llama):
@@ -134,18 +131,18 @@ class TestRunSingleExperiment:
             assert stats["avg_latency_ms"] == 0.0
 
     @patch("haystack_test.query_llama", side_effect=HaystackQueryError("API failed"))
-    def test_error_sets_total_completion_zero(self, mock_query_llama):
+    def test_error_propagates(self, mock_query_llama):
         config = self._make_config()
-        rows, model_name, stats = run_single_experiment(1, config, 42)
 
-        assert stats["total_completion"] == 0
+        with pytest.raises(HaystackQueryError, match="API failed"):
+            run_single_experiment(1, config, 42)
 
-    @patch("haystack_test.query_llama", side_effect=HaystackQueryError("API failed"))
-    def test_error_sets_total_tokens_zero(self, mock_query_llama):
+    @patch("haystack_test.query_llama", side_effect=HaystackQueryError("connection lost"))
+    def test_error_propagates_with_message(self, mock_query_llama):
         config = self._make_config()
-        rows, model_name, stats = run_single_experiment(1, config, 42)
 
-        assert stats["total_tokens"] == 0
+        with pytest.raises(HaystackQueryError, match="connection lost"):
+            run_single_experiment(1, config, 42)
 
     @patch("haystack_test.random.seed")
     @patch("haystack_test.query_llama")
@@ -190,11 +187,11 @@ class TestRunSingleExperiment:
         assert "model_name" in stats
 
     @patch("haystack_test.query_llama", side_effect=HaystackQueryError("Connection refused"))
-    def test_error_stats_has_error_message(self, mock_query_llama):
+    def test_error_propagates_from_query(self, mock_query_llama):
         config = self._make_config()
-        rows, model_name, stats = run_single_experiment(1, config, 42)
 
-        assert stats["error"] == "Connection refused"
+        with pytest.raises(HaystackQueryError, match="Connection refused"):
+            run_single_experiment(1, config, 42)
 
     @patch("haystack_test.query_llama")
     def test_truncated_stats_has_true(self, mock_query_llama):
