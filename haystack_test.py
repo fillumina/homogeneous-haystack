@@ -1024,13 +1024,8 @@ def main() -> None:
         actual_real_needles, args.distractors_num, args.distractor_pct
     )
     actual_total = actual_real_needles + actual_distractors
-    print(f"Seed: {seed}")
-    print(f"Endpoint: {args.endpoint}")
-    pct = args.distractor_pct if args.distractor_pct is not None else 0.08
-    print(f"Haystack: {args.haystack_num} pairs, {actual_total} needles "
-          f"({actual_real_needles} real + {actual_distractors} distractors, "
-          f"{pct*100:.0f}% distractors)")
-    print(f"Output: {args.output}")
+    _print_config(config, seed, actual_real_needles, actual_distractors,
+                 actual_total, args)
     print()
 
     all_rows: list[ResultRow] = []
@@ -1056,14 +1051,9 @@ def main() -> None:
                 print(f"model={model_name}, OUTPUT TRUNCATED")
             elif rows:
                 correct_count = sum(1 for r in rows if r.correct == 1)
-                tps = stats.get("tokens_per_sec", 0)
-                avg_lat = stats.get("avg_latency_ms", 0)
                 print(f"model={model_name}, "
                       f"accuracy={correct_count}/{len(rows)} "
-                      f"({100*correct_count/len(rows):.1f}%) "
-                      f"tokens={stats.get('total_tokens', 0)} "
-                      f"avg_lat={avg_lat:.0f}ms"
-                      + (f" tps={tps:.1f}" if tps else ""))
+                      f"({100*correct_count/len(rows):.1f}%)")
             else:
                 print(f"model={model_name}, no results")
         except Exception as e:
@@ -1090,6 +1080,24 @@ def main() -> None:
         repeat=args.repeat,
         start_time=start_time,
     )
+
+
+def _print_config(
+    config: Config,
+    seed: int,
+    actual_real_needles: int,
+    actual_distractors: int,
+    actual_total: int,
+    args: argparse.Namespace,
+) -> None:
+    """Print benchmark configuration parameters before starting runs."""
+    pct = args.distractor_pct if args.distractor_pct is not None else 0.08
+    print(f"Seed: {seed}")
+    print(f"Endpoint: {args.endpoint}")
+    print(f"Haystack: {config.haystack_num} pairs, {actual_total} needles "
+          f"({actual_real_needles} real + {actual_distractors} distractors, "
+          f"{pct*100:.0f}% distractors)")
+    print(f"Output: {args.output}")
 
 
 def _print_summary(
@@ -1138,10 +1146,14 @@ def _print_summary(
     print(f"  Timeout:           {config.timeout}s")
     print(f"  Seed:              {seed}")
     print(f"  Repeat:            {repeat}")
+    print(f"  Endpoint:          {config.endpoint}")
 
     # Per-run results
     if all_stats:
         print("\nPer-run results:")
+        run_rows = {}
+        for r in all_rows:
+            run_rows.setdefault(r.run, []).append(r)
         for i, stats in enumerate(all_stats):
             model_name = stats.get("model_name", "N/A") or "N/A"
             total_tokens = stats.get("total_tokens", 0) or 0
@@ -1149,6 +1161,9 @@ def _print_summary(
             tps = stats.get("tokens_per_sec", 0)
             error = stats.get("error")
             truncated = stats.get("truncated")
+            run_rows_for_this = run_rows.get(i + 1, [])
+            correct_count = sum(1 for r in run_rows_for_this if r.correct == 1)
+            row_count = len(run_rows_for_this)
 
             print(f"  Run:       {i + 1}")
             print(f"  Model:     {model_name}")
@@ -1157,6 +1172,8 @@ def _print_summary(
             elif truncated:
                 print("  Status:    OUTPUT TRUNCATED")
             else:
+                print(f"  Accuracy:    {correct_count}/{row_count} "
+                      f"({100*correct_count/row_count:.1f}%)" if row_count > 0 else "  Accuracy:    N/A")
                 print(f"  Tokens:    {total_tokens}")
                 print(f"  Avg Lat:   {avg_lat:.0f}ms")
                 if tps:
