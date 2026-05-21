@@ -7,8 +7,10 @@ import pytest
 
 from haystack_test import (
     Config,
+    DebugContext,
     HaystackQueryError,
     Needle,
+    QueryResult,
     _query_batch,
     query_llama,
 )
@@ -259,34 +261,42 @@ class TestQueryBatch:
         config = self._make_config()
         needles = self._make_needles()
         haystack_text = "ABCD1234 = 1234\nEFGH5678 = 5678"
+        debug = DebugContext()
 
-        result = _query_batch(config, haystack_text, needles)
+        result = _query_batch(config, haystack_text, needles, debug)
 
-        parsed, messages, response_text, raw_response, model_name, usage, latency_ms, error, truncated = result
-
-        assert parsed == {"ABCD1234": "1234", "EFGH5678": "5678"}
-        assert error is None
-        assert not truncated
-        assert model_name == "test-model"
-        assert latency_ms == 100.0
+        assert isinstance(result, QueryResult)
+        assert result.parsed == {"ABCD1234": "1234", "EFGH5678": "5678"}
+        assert not result.truncated
+        assert result.latency_ms == 100.0
+        assert debug.model_name == "test-model"
 
     @patch("haystack_test.query_llama")
-    def test_error_path_returns_empty_parsed(self, mock_query_llama):
+    def test_error_propagates_haystack_query_error(self, mock_query_llama):
         mock_query_llama.side_effect = HaystackQueryError("API failed")
 
         config = self._make_config()
         needles = self._make_needles()
         haystack_text = "ABCD1234 = 1234"
+        debug = DebugContext()
 
-        result = _query_batch(config, haystack_text, needles)
+        with pytest.raises(HaystackQueryError, match="API failed"):
+            _query_batch(config, haystack_text, needles, debug)
 
-        parsed, messages, response_text, raw_response, model_name, usage, latency_ms, error, truncated = result
+    @patch("haystack_test.query_llama")
+    def test_error_fills_model_name_in_debug(self, mock_query_llama):
+        mock_query_llama.side_effect = HaystackQueryError("API failed")
 
-        assert parsed == {}
-        assert error == "API failed"
-        assert raw_response is None
-        assert model_name == "error"
-        assert not truncated
+        config = self._make_config()
+        needles = self._make_needles()
+        haystack_text = "ABCD1234 = 1234"
+        debug = DebugContext()
+
+        with pytest.raises(HaystackQueryError):
+            _query_batch(config, haystack_text, needles, debug)
+
+        # debug.model_name is NOT set on error (caller handles it)
+        assert debug.model_name == ""
 
     @patch("haystack_test.query_llama")
     def test_truncated_detection(self, mock_query_llama):
@@ -297,12 +307,11 @@ class TestQueryBatch:
         config = self._make_config(max_tokens=240000)
         needles = self._make_needles()
         haystack_text = "ABCD1234 = 1234"
+        debug = DebugContext()
 
-        result = _query_batch(config, haystack_text, needles)
+        result = _query_batch(config, haystack_text, needles, debug)
 
-        parsed, messages, response_text, raw_response, model_name, usage, latency_ms, error, truncated = result
-
-        assert truncated is True
+        assert result.truncated is True
 
     @patch("haystack_test.query_llama")
     def test_not_truncated_when_below_max(self, mock_query_llama):
@@ -313,15 +322,14 @@ class TestQueryBatch:
         config = self._make_config(max_tokens=240000)
         needles = self._make_needles()
         haystack_text = "ABCD1234 = 1234"
+        debug = DebugContext()
 
-        result = _query_batch(config, haystack_text, needles)
+        result = _query_batch(config, haystack_text, needles, debug)
 
-        parsed, messages, response_text, raw_response, model_name, usage, latency_ms, error, truncated = result
-
-        assert truncated is False
+        assert result.truncated is False
 
     @patch("haystack_test.query_llama")
-    def test_messages_are_returned(self, mock_query_llama):
+    def test_messages_are_filled_in_debug(self, mock_query_llama):
         mock_query_llama.return_value = (
             self._make_mock_success_response("ABCD1234 = 1234"),
             100.0,
@@ -330,14 +338,13 @@ class TestQueryBatch:
         config = self._make_config()
         needles = self._make_needles()
         haystack_text = "ABCD1234 = 1234"
+        debug = DebugContext()
 
-        result = _query_batch(config, haystack_text, needles)
+        _query_batch(config, haystack_text, needles, debug)
 
-        parsed, messages, response_text, raw_response, model_name, usage, latency_ms, error, truncated = result
-
-        assert isinstance(messages, list)
-        assert len(messages) == 2
-        assert messages[0]["role"] == "system"
+        assert isinstance(debug.messages, list)
+        assert len(debug.messages) == 2
+        assert debug.messages[0]["role"] == "system"
 
     @patch("haystack_test.query_llama")
     def test_usage_is_returned(self, mock_query_llama):
@@ -349,30 +356,15 @@ class TestQueryBatch:
         config = self._make_config()
         needles = self._make_needles()
         haystack_text = "ABCD1234 = 1234"
+        debug = DebugContext()
 
-        result = _query_batch(config, haystack_text, needles)
+        result = _query_batch(config, haystack_text, needles, debug)
 
-        parsed, messages, response_text, raw_response, model_name, usage, latency_ms, error, truncated = result
-
-        assert usage is not None
-        assert usage["total_tokens"] == 150
-
-    @patch("haystack_test.query_llama")
-    def test_error_sets_latency_to_zero(self, mock_query_llama):
-        mock_query_llama.side_effect = HaystackQueryError("API failed")
-
-        config = self._make_config()
-        needles = self._make_needles()
-        haystack_text = "ABCD1234 = 1234"
-
-        result = _query_batch(config, haystack_text, needles)
-
-        parsed, messages, response_text, raw_response, model_name, usage, latency_ms, error, truncated = result
-
-        assert latency_ms == 0.0
+        assert result.usage is not None
+        assert result.usage["total_tokens"] == 150
 
     @patch("haystack_test.query_llama")
-    def test_response_text_is_content_field(self, mock_query_llama):
+    def test_response_text_is_filled_in_debug(self, mock_query_llama):
         mock_query_llama.return_value = (
             self._make_mock_success_response("my custom response"),
             100.0,
@@ -381,9 +373,25 @@ class TestQueryBatch:
         config = self._make_config()
         needles = self._make_needles()
         haystack_text = "ABCD1234 = 1234"
+        debug = DebugContext()
 
-        result = _query_batch(config, haystack_text, needles)
+        _query_batch(config, haystack_text, needles, debug)
 
-        parsed, messages, response_text, raw_response, model_name, usage, latency_ms, error, truncated = result
+        assert debug.response_text == "my custom response"
 
-        assert response_text == "my custom response"
+    @patch("haystack_test.query_llama")
+    def test_raw_response_is_filled_in_debug(self, mock_query_llama):
+        mock_query_llama.return_value = (
+            self._make_mock_success_response("ABCD1234 = 1234"),
+            100.0,
+        )
+
+        config = self._make_config()
+        needles = self._make_needles()
+        haystack_text = "ABCD1234 = 1234"
+        debug = DebugContext()
+
+        _query_batch(config, haystack_text, needles, debug)
+
+        assert debug.raw_response is not None
+        assert debug.raw_response["model"] == "test-model"

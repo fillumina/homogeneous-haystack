@@ -135,6 +135,61 @@ class Summary:
     actual_total: int
 
 
+@dataclass
+class QueryResult:
+    parsed: dict[str, str]
+    usage: ApiUsage | None
+    latency_ms: float
+    truncated: bool
+
+
+@dataclass
+class DebugContext:
+    """Mutable context for debug display data, used like a logging facility.
+
+    Functions populate it via methods rather than direct field mutation.
+    Callers read the fields after the fact to produce display output.
+    """
+
+    messages: list[Message] | None = None
+    raw_response: ApiResponseBody | None = None
+    response_text: str = ""
+    model_name: str = ""
+
+    def clear(self) -> None:
+        """Reset all fields for a new experiment run."""
+        self.messages = None
+        self.raw_response = None
+        self.response_text = ""
+        self.model_name = ""
+
+    def record_query(
+        self,
+        messages: list[Message],
+        raw_response: ApiResponseBody,
+        response_text: str,
+        model_name: str,
+    ) -> None:
+        """Record successful query results as side effects."""
+        self.messages = messages
+        self.raw_response = raw_response
+        self.response_text = response_text
+        self.model_name = model_name
+
+    def record_error(self, error_message: str) -> None:
+        """Record an API error, setting model_name to 'error'."""
+        self.model_name = "error"
+        self.messages = None
+        self.raw_response = None
+        self.response_text = ""
+        self._error = error_message
+
+    @property
+    def error(self) -> str | None:
+        """The error message if one was recorded, else None."""
+        return getattr(self, "_error", None)
+
+
 # ---------------------------------------------------------------------------
 # Data generation
 # ---------------------------------------------------------------------------
@@ -584,51 +639,51 @@ def _query_batch(
     config: Config,
     haystack_text: str,
     needles: list[Needle],
-) -> tuple[dict[str, str], list[Message], str, ApiResponseBody | None, str,
-           ApiUsage | None, float, str | None, bool]:
+    debug: DebugContext,
+) -> QueryResult:
     """Query the model with all needles in a single prompt.
 
     Args:
         config: Benchmark configuration.
         haystack_text: The full haystack text.
         needles: List of needles to query.
+        debug: Mutable context filled with debug data as side effects.
 
     Returns:
-        Tuple of (parsed results, prompt messages, response text,
-        raw response body, model name, usage info, latency in ms,
-        error message or None, truncated flag).
+        QueryResult with parsed results, usage, latency, and truncation flag.
+
+    Raises:
+        HaystackQueryError: On API errors (propagated to caller).
     """
     messages = build_prompt(haystack_text, needles)
     needle_keys: set[str] = {n.key for n in needles}
 
-    try:
-        raw_response, latency_ms = query_llama(
-            config.endpoint,
-            messages,
-            model=config.model,
-            temperature=config.temperature,
-            max_tokens=config.max_tokens,
-            timeout=config.timeout,
-        )
-        model_name = raw_response.get("model", "unknown") or "unknown"  # type: ignore[union-attr]
-        response_text = raw_response["choices"][0]["message"].get("content", "")  # type: ignore[typeddict-item]
-        usage = raw_response.get("usage")
-        error = None
-        truncated = (
-            usage is not None
-            and usage.get("completion_tokens") == config.max_tokens  # type: ignore[attr-defined]
-        )
-    except HaystackQueryError as e:
-        raw_response = None
-        model_name = "error"
-        response_text = ""
-        usage = None
-        latency_ms = 0.0
-        error = str(e)
-        truncated = False
+    raw_response, latency_ms = query_llama(
+        config.endpoint,
+        messages,
+        model=config.model,
+        temperature=config.temperature,
+        max_tokens=config.max_tokens,
+        timeout=config.timeout,
+    )
 
-    parsed = parse_response(response_text, needle_keys) if error is None else {}
-    return parsed, messages, response_text, raw_response, model_name, usage, latency_ms, error, truncated  # type: ignore[return-value]
+    model_name = raw_response.get("model", "unknown") or "unknown"  # type: ignore[union-attr]
+    response_text = raw_response["choices"][0]["message"].get("content", "")  # type: ignore[typeddict-item]
+    debug.record_query(messages, raw_response, response_text, model_name)
+    usage = raw_response.get("usage")
+
+    truncated = (
+        usage is not None
+        and usage.get("completion_tokens") == config.max_tokens  # type: ignore[attr-defined]
+    )
+
+    parsed = parse_response(debug.response_text, needle_keys)
+    return QueryResult(
+        parsed=parsed,
+        usage=usage,
+        latency_ms=latency_ms,
+        truncated=truncated,
+    )
 
 
 def _build_rows(
@@ -674,34 +729,32 @@ def _build_rows(
 
 def _print_results(
     run_index: int,
-    model_name: str,
     needles: list[Needle],
     pairs: list[HaystackPair],
     parsed: dict[str, str],
     *,
     show: str | None = None,
     is_full: bool,
-    messages: list[Message] | None = None,
-    raw_response: ApiResponseBody | None = None,
-    response_text: str = "",
+    debug: DebugContext,
 ) -> None:
     """Print experiment results and optional debug output.
 
     Args:
         run_index: The experiment run number.
-        model_name: Name of the model that was queried.
         needles: List of needles that were queried.
         pairs: Full list of haystack pairs.
         parsed: Parsed key -> value results from the model.
         show: Which debug output to show ("prompt", "response", "all", or None).
         is_full: Whether to print full untruncated content.
-        messages: Prompt messages (optional).
-        raw_response: Raw API response body (optional).
-        response_text: Extracted response content text.
+        debug: Context containing messages, raw response, response text, and model name.
     """
+    messages = debug.messages
+    raw_response = debug.raw_response
+    response_text = debug.response_text
+
     print()
     print("=" * 60)
-    print(f"Run {run_index} — model={model_name}")
+    print(f"Run {run_index} — model={debug.model_name}")
     print("=" * 60)
 
     if messages is not None and (show in ("prompt", "all") or is_full):
@@ -791,23 +844,41 @@ def run_single_experiment(
         fuzz=config.fuzz,
     )
 
-    parsed, messages, response_text, raw_response, model_name, usage, latency_ms, error, truncated = (
-        _query_batch(config, haystack_text, needles)
-    )
+    debug = DebugContext()
+
+    try:
+        result = _query_batch(config, haystack_text, needles, debug)
+    except HaystackQueryError as e:
+        debug.record_error(str(e))
+        stats: RunStats = {
+            "total_tokens": 0,
+            "total_latency_ms": 0,
+            "total_completion": 0,
+            "error": debug.error,
+            "truncated": False,
+            "model_name": "error",
+        }
+        print()
+        print("=" * 60)
+        print(f"Run {run_index} — {e}")
+        print("=" * 60)
+        print()
+        return [], "error", stats
+
     rows = _build_rows(
-        run_index, needles, pairs, parsed, usage, latency_ms
+        run_index, needles, pairs, result.parsed, result.usage, result.latency_ms
     )
-    total_tokens = usage["total_tokens"] if usage else 0
-    total_latency = latency_ms
-    total_completion = usage["completion_tokens"] if usage else 0
+    total_tokens = result.usage["total_tokens"] if result.usage else 0
+    total_latency = result.latency_ms
+    total_completion = result.usage["completion_tokens"] if result.usage else 0
 
     stats: RunStats = {
         "total_tokens": total_tokens,
         "total_latency_ms": total_latency,
         "total_completion": total_completion,
-        "error": error,
-        "truncated": truncated,
-        "model_name": model_name,
+        "error": None,
+        "truncated": result.truncated,
+        "model_name": debug.model_name,
     }
     if total_latency > 0:
         stats["tokens_per_sec"] = round(total_completion / (total_latency / 1000), 1)
@@ -815,14 +886,7 @@ def run_single_experiment(
         total_latency / len(needles), 1
     ) if needles else 0.0
 
-    if error:
-        print()
-        print("=" * 60)
-        print(f"Run {run_index} — {error}")
-        print("=" * 60)
-        print()
-        rows = []
-    elif truncated:
+    if result.truncated:
         print()
         print("=" * 60)
         print(f"Run {run_index} — OUTPUT TRUNCATED (completion_tokens reached max_tokens={config.max_tokens})")
@@ -830,14 +894,12 @@ def run_single_experiment(
         print()
     elif show or is_full:
         _print_results(
-            run_index, model_name, needles, pairs, parsed,
+            run_index, needles, pairs, result.parsed,
             show=show, is_full=is_full,
-            messages=messages,
-            raw_response=raw_response,
-            response_text=response_text,
+            debug=debug,
         )
 
-    return rows, model_name, stats
+    return rows, debug.model_name, stats
 
 
 def validate_params(config: Config) -> None:
