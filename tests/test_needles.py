@@ -9,7 +9,7 @@ from haystack_test import (
     resolve_distractors_num,
     select_needles,
     shake_positions,
-    validate_params,
+    _validate_params,
 )
 
 
@@ -139,7 +139,6 @@ class TestSelectNeedles:
 
 
 VALIDATION_CASES = [
-    ({"distractor_pct": 0.1, "distractors_num": 5}, "cannot both be set"),
     ({"distractors_num": -1}, "distractors_num must be >= 0"),
     ({"haystack_num": 0}, "haystack_num must be >= 1"),
     ({"haystack_num": -1}, "haystack_num must be >= 1"),
@@ -147,9 +146,6 @@ VALIDATION_CASES = [
     ({"needles_num": -5}, "needles_num must be >= 1"),
     ({"key_len": 0}, "key_len must be >= 1"),
     ({"key_len": -3}, "key_len must be >= 1"),
-    ({"distractor_pct": -0.1}, "distractor_pct must be in"),
-    ({"distractor_pct": 1.0}, "distractor_pct must be in"),
-    ({"distractor_pct": 1.5}, "distractor_pct must be in"),
     ({"val_min": 99999, "val_max": 10000}, "val_min.*> val_max"),
     ({"fuzz": -0.1}, "fuzz must be in"),
     ({"fuzz": 0.5}, "fuzz must be in"),
@@ -164,43 +160,36 @@ class TestValidation:
             endpoint="http://localhost:8080/v1/chat/completions",
             model=None, key_len=8, val_min=10000, val_max=99999,
             haystack_num=100, needles_num=50,
-            distractor_pct=None, distractors_num=None,
+            distractors_num=0,
             temperature=0.0, max_tokens=240000, timeout=7200, full=False,
+            output_filename="results.csv", show="all", repeat=1, seed=42,
         )
         for k, v in overrides.items():
             setattr(config, k, v)
         with pytest.raises(ValueError, match=expected_msg):
-            validate_params(config)
+            _validate_params(config)
 
     def test_valid_no_distractors(self):
         config = Config(
             endpoint="http://localhost:8080/v1/chat/completions",
             model=None, key_len=8, val_min=10000, val_max=99999,
             haystack_num=100, needles_num=50,
-            distractor_pct=None, distractors_num=0,
+            distractors_num=0,
             temperature=0.0, max_tokens=240000, timeout=7200, full=False,
+            output_filename="results.csv", show="all", repeat=1, seed=42,
         )
-        validate_params(config)
-
-    def test_valid_pct_only(self):
-        config = Config(
-            endpoint="http://localhost:8080/v1/chat/completions",
-            model=None, key_len=8, val_min=10000, val_max=99999,
-            haystack_num=100, needles_num=50,
-            distractor_pct=0.1, distractors_num=None,
-            temperature=0.0, max_tokens=240000, timeout=7200, full=False,
-        )
-        validate_params(config)
+        _validate_params(config)
 
     def test_valid_num_only(self):
         config = Config(
             endpoint="http://localhost:8080/v1/chat/completions",
             model=None, key_len=8, val_min=10000, val_max=99999,
             haystack_num=100, needles_num=50,
-            distractor_pct=None, distractors_num=10,
+            distractors_num=10,
             temperature=0.0, max_tokens=240000, timeout=7200, full=False,
+            output_filename="results.csv", show="all", repeat=1, seed=42,
         )
-        validate_params(config)
+        _validate_params(config)
 
 
 
@@ -212,8 +201,7 @@ class TestNumNeedlesGreaterThanHaystackN:
         _, pairs, needles = generate_haystack_and_needles(
             haystack_num=haystack_num,
             needles_num=needles_num,
-            distractor_pct=0.08,
-            distractors_num=None,
+            distractors_num=2,
             key_len=8,
             val_min=10000,
             val_max=99999,
@@ -226,12 +214,10 @@ class TestNumNeedlesGreaterThanHaystackN:
         seeded_random(42)
         haystack_num = 17
         needles_num = 100
-        distractor_pct = 0.08
         _, _, needles = generate_haystack_and_needles(
             haystack_num=haystack_num,
             needles_num=needles_num,
-            distractor_pct=distractor_pct,
-            distractors_num=None,
+            distractors_num=2,
             key_len=8,
             val_min=10000,
             val_max=99999,
@@ -239,19 +225,16 @@ class TestNumNeedlesGreaterThanHaystackN:
         )
         real = [n for n in needles if not n.is_distractor]
         distractors = [n for n in needles if n.is_distractor]
-        expected_distractors = int(len(real) * distractor_pct)
-        assert len(distractors) == expected_distractors
+        assert len(distractors) == 2
 
     def test_total_needles_is_real_plus_distractors(self, seeded_random):
         seeded_random(42)
         haystack_num = 17
         needles_num = 100
-        distractor_pct = 0.08
         _, _, needles = generate_haystack_and_needles(
             haystack_num=haystack_num,
             needles_num=needles_num,
-            distractor_pct=distractor_pct,
-            distractors_num=None,
+            distractors_num=2,
             key_len=8,
             val_min=10000,
             val_max=99999,
@@ -265,12 +248,10 @@ class TestNumNeedlesGreaterThanHaystackN:
         seeded_random(42)
         haystack_num = 100
         needles_num = 50
-        distractor_pct = 0.1
         _, _, needles = generate_haystack_and_needles(
             haystack_num=haystack_num,
             needles_num=needles_num,
-            distractor_pct=distractor_pct,
-            distractors_num=None,
+            distractors_num=5,
             key_len=8,
             val_min=10000,
             val_max=99999,
@@ -279,17 +260,16 @@ class TestNumNeedlesGreaterThanHaystackN:
         real = [n for n in needles if not n.is_distractor]
         distractors = [n for n in needles if n.is_distractor]
         assert len(real) == needles_num
-        assert len(distractors) == int(needles_num * distractor_pct)
+        assert len(distractors) == 5
 
-    def test_no_distractors_when_pct_is_zero(self, seeded_random):
+    def test_no_distractors_when_num_is_zero(self, seeded_random):
         seeded_random(42)
         haystack_num = 17
         needles_num = 100
         _, _, needles = generate_haystack_and_needles(
             haystack_num=haystack_num,
             needles_num=needles_num,
-            distractor_pct=0.0,
-            distractors_num=None,
+            distractors_num=0,
             key_len=8,
             val_min=10000,
             val_max=99999,
@@ -308,7 +288,6 @@ class TestDistractorsNum:
         _, _, needles = generate_haystack_and_needles(
             haystack_num=haystack_num,
             needles_num=needles_num,
-            distractor_pct=None,
             distractors_num=exact_distractors,
             key_len=8,
             val_min=10000,
@@ -327,7 +306,6 @@ class TestDistractorsNum:
         _, _, needles = generate_haystack_and_needles(
             haystack_num=haystack_num,
             needles_num=needles_num,
-            distractor_pct=None,
             distractors_num=0,
             key_len=8,
             val_min=10000,
@@ -337,33 +315,13 @@ class TestDistractorsNum:
         distractors = [n for n in needles if n.is_distractor]
         assert len(distractors) == 0
 
-    def test_default_8_pct_when_neither_set(self, seeded_random):
+    def test_distractors_num_sets_exact_count(self, seeded_random):
         seeded_random(42)
         haystack_num = 50
         needles_num = 20
         _, _, needles = generate_haystack_and_needles(
             haystack_num=haystack_num,
             needles_num=needles_num,
-            distractor_pct=None,
-            distractors_num=None,
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            fuzz=0,
-        )
-        real = [n for n in needles if not n.is_distractor]
-        distractors = [n for n in needles if n.is_distractor]
-        expected = int(len(real) * 0.08)
-        assert len(distractors) == expected
-
-    def test_distractors_num_overrides_pct(self, seeded_random):
-        seeded_random(42)
-        haystack_num = 50
-        needles_num = 20
-        _, _, needles = generate_haystack_and_needles(
-            haystack_num=haystack_num,
-            needles_num=needles_num,
-            distractor_pct=0.5,
             distractors_num=2,
             key_len=8,
             val_min=10000,
@@ -488,7 +446,6 @@ class TestDenseNeedlesSkipFuzz:
         _, _, needles = generate_haystack_and_needles(
             haystack_num=haystack_num,
             needles_num=needles_num,
-            distractor_pct=None,
             distractors_num=0,
             key_len=8,
             val_min=10000,
@@ -509,7 +466,6 @@ class TestDenseNeedlesSkipFuzz:
         _, _, needles = generate_haystack_and_needles(
             haystack_num=haystack_num,
             needles_num=needles_num,
-            distractor_pct=None,
             distractors_num=0,
             key_len=8,
             val_min=10000,
@@ -530,7 +486,6 @@ class TestDenseNeedlesSkipFuzz:
         _, _, needles = generate_haystack_and_needles(
             haystack_num=haystack_num,
             needles_num=needles_num,
-            distractor_pct=None,
             distractors_num=0,
             key_len=8,
             val_min=10000,

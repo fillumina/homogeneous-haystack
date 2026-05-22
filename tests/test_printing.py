@@ -2,6 +2,7 @@ import datetime
 
 from haystack_test import (
     Config,
+    GlobalResult,
     ResultRow,
     _print_message,
     _print_summary,
@@ -60,12 +61,15 @@ class TestPrintSummary:
             val_max=99999,
             haystack_num=100,
             needles_num=10,
-            distractor_pct=None,
             distractors_num=2,
             temperature=0.0,
             max_tokens=240000,
             timeout=7200,
             full=False,
+            seed=42,
+            repeat=1,
+            output_filename="results.csv",
+            show="all",
         )
 
     def _make_rows(self):
@@ -84,8 +88,11 @@ class TestPrintSummary:
             ),
         ]
 
-    def _make_stats(self):
-        return [
+    def test_prints_full_summary(self, capsys):
+        config = self._make_config()
+        result = GlobalResult()
+        result.all_rows = self._make_rows()
+        result.all_stats = [
             {
                 "total_tokens": 150,
                 "total_latency_ms": 200.0,
@@ -97,20 +104,9 @@ class TestPrintSummary:
                 "avg_latency_ms": 20.0,
             }
         ]
-
-    def test_prints_full_summary(self, capsys):
-        config = self._make_config()
-        summary = type("Summary", (), {
-            "actual_real_needles": 10, "actual_distractors": 2, "actual_total": 12
-        })()
         start = datetime.datetime(2024, 1, 1, 10, 0, 0)
 
-        _print_summary(
-            config=config, seed=42, summary=summary,
-            all_rows=self._make_rows(), all_stats=self._make_stats(),
-            timed_out_runs=[], truncated_runs=[],
-            output_file="results.csv", repeat=1, start_time=start,
-        )
+        _print_summary(config=config, result=result, start_time=start)
 
         captured = capsys.readouterr()
         assert "SUMMARY" in captured.out
@@ -125,22 +121,17 @@ class TestPrintSummary:
 
     def test_prints_errors_and_truncation(self, capsys):
         config = self._make_config()
-        summary = type("Summary", (), {
-            "actual_real_needles": 10, "actual_distractors": 2, "actual_total": 12
-        })()
-        stats = [{
+        result = GlobalResult()
+        result.all_rows = []
+        result.all_stats = [{
             "total_tokens": 0, "total_latency_ms": 0, "total_completion": 0,
             "error": "Connection refused", "truncated": False,
             "model_name": "error", "tokens_per_sec": 0, "avg_latency_ms": 0,
         }]
+        result.timed_out_runs = [1]
         start = datetime.datetime.now()
 
-        _print_summary(
-            config=config, seed=42, summary=summary,
-            all_rows=[], all_stats=stats,
-            timed_out_runs=[1], truncated_runs=[],
-            output_file="results.csv", repeat=1, start_time=start,
-        )
+        _print_summary(config=config, result=result, start_time=start)
 
         captured = capsys.readouterr()
         assert "ERROR" in captured.out
@@ -150,22 +141,17 @@ class TestPrintSummary:
 
     def test_prints_truncated_runs(self, capsys):
         config = self._make_config()
-        summary = type("Summary", (), {
-            "actual_real_needles": 10, "actual_distractors": 2, "actual_total": 12
-        })()
-        stats = [{
+        result = GlobalResult()
+        result.all_rows = []
+        result.all_stats = [{
             "total_tokens": 100, "total_latency_ms": 5000, "total_completion": 240000,
             "error": None, "truncated": True,
             "model_name": "test-model", "tokens_per_sec": 48000.0, "avg_latency_ms": 500.0,
         }]
+        result.truncated_runs = [1]
         start = datetime.datetime.now()
 
-        _print_summary(
-            config=config, seed=42, summary=summary,
-            all_rows=[], all_stats=stats,
-            timed_out_runs=[], truncated_runs=[1],
-            output_file="results.csv", repeat=1, start_time=start,
-        )
+        _print_summary(config=config, result=result, start_time=start)
 
         captured = capsys.readouterr()
         assert "TRUNCATED" in captured.out
@@ -173,22 +159,16 @@ class TestPrintSummary:
 
     def test_prints_latency_in_minutes(self, capsys):
         config = self._make_config()
-        summary = type("Summary", (), {
-            "actual_real_needles": 10, "actual_distractors": 2, "actual_total": 12
-        })()
-        stats = [{
+        result = GlobalResult()
+        result.all_rows = self._make_rows()
+        result.all_stats = [{
             "total_tokens": 100000, "total_latency_ms": 180000, "total_completion": 50000,
             "error": None, "truncated": False,
             "model_name": "test-model", "tokens_per_sec": 277.8, "avg_latency_ms": 10.0,
         }]
         start = datetime.datetime.now()
 
-        _print_summary(
-            config=config, seed=42, summary=summary,
-            all_rows=self._make_rows(), all_stats=stats,
-            timed_out_runs=[], truncated_runs=[],
-            output_file="results.csv", repeat=1, start_time=start,
-        )
+        _print_summary(config=config, result=result, start_time=start)
 
         captured = capsys.readouterr()
         assert "min" in captured.out
