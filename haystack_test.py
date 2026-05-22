@@ -23,8 +23,20 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import TypedDict
+from enum import Enum, auto
+
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+CSV_COLUMNS: list[str] = [
+    "run", "haystack_size", "depth_pct", "correct", "expected", "actual",
+    "prompt_tokens", "completion_tokens", "total_tokens", "latency_ms",
+]
+
 
 # ---------------------------------------------------------------------------
 # Types
@@ -105,19 +117,57 @@ class Needle:
 @dataclass
 class Config:
     endpoint: str
+    output_filename: str
+    show: str
     model: str | None
     key_len: int
     val_min: int
     val_max: int
     haystack_num: int
     needles_num: int
-    distractor_pct: float | None
-    distractors_num: int | None
+    distractors_num: int
     temperature: float
     max_tokens: int
     timeout: int
+    repeat: int
     full: bool
+    seed: int
     fuzz: float = 0.49
+
+
+@dataclass
+class ModelResult:
+    rows: list[ResultRow]
+    model_name: str
+    stats: RunStats
+
+
+class GlobalResultType(Enum):
+    TRUNCATED = auto()
+    NO_RESULTS = auto()
+    OK = auto()
+
+@dataclass
+class GlobalResult:
+    all_rows: list[ResultRow] = field(default_factory=list)
+    all_stats: list[RunStats] = field(default_factory=list)
+    timed_out_runs: list[int] = field(default_factory=list)
+    truncated_runs: list[int] = field(default_factory=list)
+
+    def add_model_result(self, run_idx:int, model_result: ModelResult) -> GlobalResultType:
+        self.all_rows.extend(model_result.rows)
+        self.all_stats.append(model_result.stats)
+        error = model_result.stats.get("error")
+        truncated = model_result.stats.get("truncated")
+        if error:
+            self.timed_out_runs.append(run_idx + 1)
+            raise Exception(error)
+        elif truncated:
+            self.truncated_runs.append(run_idx + 1)
+            return GlobalResultType.TRUNCATED
+        elif model_result.rows:
+            return GlobalResultType.OK
+        return GlobalResultType.NO_RESULTS
 
 
 @dataclass
@@ -142,52 +192,12 @@ class QueryResult:
     latency_ms: float
     truncated: bool
 
-
 @dataclass
 class DebugContext:
-    """Mutable context for debug display data, used like a logging facility.
-
-    Functions populate it via methods rather than direct field mutation.
-    Callers read the fields after the fact to produce display output.
-    """
-
     messages: list[Message] | None = None
     raw_response: ApiResponseBody | None = None
     response_text: str = ""
     model_name: str = ""
-
-    def clear(self) -> None:
-        """Reset all fields for a new experiment run."""
-        self.messages = None
-        self.raw_response = None
-        self.response_text = ""
-        self.model_name = ""
-
-    def record_query(
-        self,
-        messages: list[Message],
-        raw_response: ApiResponseBody,
-        response_text: str,
-        model_name: str,
-    ) -> None:
-        """Record successful query results as side effects."""
-        self.messages = messages
-        self.raw_response = raw_response
-        self.response_text = response_text
-        self.model_name = model_name
-
-    def record_error(self, error_message: str) -> None:
-        """Record an API error, setting model_name to 'error'."""
-        self.model_name = "error"
-        self.messages = None
-        self.raw_response = None
-        self.response_text = ""
-        self._error = error_message
-
-    @property
-    def error(self) -> str | None:
-        """The error message if one was recorded, else None."""
-        return getattr(self, "_error", None)
 
 
 # ---------------------------------------------------------------------------
@@ -389,30 +399,13 @@ def select_needles(
 def generate_haystack_and_needles(
     haystack_num: int,
     needles_num: int,
-    distractor_pct: float | None,
-    distractors_num: int | None,
+    distractors_num: int,
     key_len: int,
     val_min: int,
     val_max: int,
     fuzz: float = 0.49,
 ) -> tuple[str, list[HaystackPair], list[Needle]]:
-    """Generate haystack text, pair list, and shuffled needles.
-
-    Args:
-        haystack_num: Total number of key-value pairs in the haystack.
-        needles_num: Total number of needles (real + distractors).
-        distractor_pct: Fraction of needles that are distractors (0.0-1.0).
-        distractors_num: Exact number of distractors (if set, overrides pct).
-        key_len: Length of random keys in characters.
-        val_min: Minimum value for generated values.
-        val_max: Maximum value for generated values.
-        fuzz: Fraction of the step size to jitter each needle position by (default: 0.49).
-              Fuzz is skipped entirely when needles_num > haystack_num * 2.
-
-    Returns:
-        A tuple of (haystack_text, pairs, shuffled_needles).
-
-    """
+    """Generate haystack text, pair list, and shuffled needles."""
     # Build haystack
     haystack_text, pairs = build_haystack(
         haystack_num, key_len, val_min, val_max
@@ -424,13 +417,10 @@ def generate_haystack_and_needles(
     effective_fuzz = 0.0 if needles_num > haystack_num * 2 else fuzz
     real_needles = select_needles(pairs, needles_num, effective_fuzz)
 
-    # Compute number of distractors needed
-    n_distractor = resolve_distractors_num(len(real_needles), distractors_num, distractor_pct)
-
     # Create distractor needles (keys not in haystack)
     distractor_needles = create_distractor_keys(
         pairs,
-        n_distractor,
+        distractors_num,
         len(real_needles),
         key_len,
     )
@@ -637,24 +627,10 @@ def _truncate(text: str, max_lines: int = 5, prefix: str = "...") -> str:
 
 def query_model(
     config: Config,
-    haystack_text: str,
     needles: list[Needle],
-    debug: DebugContext,
-) -> QueryResult:
-    """Query the model with all needles in a single prompt.
-
-    Args:
-        config: Benchmark configuration.
-        haystack_text: The full haystack text.
-        needles: List of needles to query.
-        debug: Mutable context filled with debug data as side effects.
-
-    Returns:
-        QueryResult with parsed results, usage, latency, and truncation flag.
-
-    Raises:
-        HaystackQueryError: On API errors (propagated to caller).
-    """
+    haystack_text: str
+) -> tuple[QueryResult, DebugContext]:
+    """Query the model with all needles in a single prompt."""
     messages = build_prompt(haystack_text, needles)
     needle_keys: set[str] = {n.key for n in needles}
 
@@ -669,7 +645,7 @@ def query_model(
 
     model_name = raw_response.get("model", "unknown") or "unknown"  # type: ignore[union-attr]
     response_text = raw_response["choices"][0]["message"].get("content", "")  # type: ignore[typeddict-item]
-    debug.record_query(messages, raw_response, response_text, model_name)
+    debug = DebugContext(messages, raw_response, response_text, model_name)
 
     # Extract usage info if available (may be missing in error responses or older API versions)
     usage = raw_response.get("usage")
@@ -681,13 +657,15 @@ def query_model(
     )
 
     # Parse the response text into a dict of key -> value for scoring.
-    parsed: dict[str,str] = parse_response(debug.response_text, needle_keys)
-    return QueryResult(
+    parsed: dict[str,str] = parse_response(response_text, needle_keys)
+    result = QueryResult(
         parsed=parsed,
         usage=usage,
         latency_ms=latency_ms,
         truncated=truncated,
     )
+
+    return result, debug
 
 
 def _build_rows(
@@ -820,27 +798,18 @@ def _print_message(msg: Message, is_full: bool) -> None:
 
 
 def run_single_experiment(
-    run_index: int, config: Config, seed: int, show: str | None = None
-) -> tuple[list[ResultRow], str, RunStats]:
-    """Run one complete experiment: generate, query, score, return rows.
+    run_index: int,
+    config: Config,
+    show: str | None = None
+) -> ModelResult:
+    """Run one complete experiment: generate, query, score, return rows."""
 
-    Args:
-        run_index: The experiment run number (for CSV output).
-        config: Benchmark configuration.
-        seed: Random seed for reproducibility.
-        show: Which debug output to show ("prompt", "response", "all", or None).
-
-    Returns:
-        Tuple of (result rows, model name, summary stats with keys:
-        total_tokens, total_latency_ms, avg_latency_ms, tokens_per_sec).
-    """
-    random.seed(seed)
-    is_full = config.full
+    # each run gets its onw seed
+    random.seed(config.seed + run_index)
 
     haystack_text, pairs, needles = generate_haystack_and_needles(
         haystack_num=config.haystack_num,
         needles_num=config.needles_num,
-        distractor_pct=config.distractor_pct,
         distractors_num=config.distractors_num,
         key_len=config.key_len,
         val_min=config.val_min,
@@ -848,11 +817,9 @@ def run_single_experiment(
         fuzz=config.fuzz,
     )
 
-    debug = DebugContext()
+    result, debug = query_model(config, needles, haystack_text)
 
-    result = query_model(config, haystack_text, needles, debug)
-
-    rows = _build_rows(
+    rows: list[ResultRow] = _build_rows(
         run_index, needles, pairs, result.parsed, result.usage, result.latency_ms
     )
     total_tokens = result.usage["total_tokens"] if result.usage else 0
@@ -873,43 +840,25 @@ def run_single_experiment(
         total_latency / len(needles), 1
     ) if needles else 0.0
 
-    if show or is_full:
+    if show or config.full:
         _print_results(
             run_index, needles, pairs, result.parsed,
-            show=show, is_full=is_full,
+            show=show, is_full=config.full,
             debug=debug,
         )
 
-    return rows, debug.model_name, stats
+    return ModelResult(rows, debug.model_name, stats)
 
 
-def validate_params(config: Config) -> None:
-    """Validate parameters for haystack and needle generation.
-
-    Args:
-        config: Benchmark configuration to validate.
-
-    Raises:
-        ValueError: If any parameter is invalid (haystack_num < 1,
-            needles_num < 1, distractor_pct out of range, key_len < 1,
-            distractors_num < 0, distractors_num and distractor_pct both set,
-            val_min > val_max, or fuzz out of range).
-    """
+def _validate_params(config: Config) -> None:
+    """Validate parameters for haystack and needle generation."""
     if config.haystack_num < 1:
         raise ValueError(f"haystack_num must be >= 1, got {config.haystack_num}")
     if config.needles_num < 1:
         raise ValueError(f"needles_num must be >= 1, got {config.needles_num}")
-    if config.distractor_pct is not None and not (0.0 <= config.distractor_pct < 1.0):
-        raise ValueError(
-            f"distractor_pct must be in [0.0, 1.0), got {config.distractor_pct}"
-        )
-    if config.distractors_num is not None and config.distractors_num < 0:
+    if config.distractors_num < 0:
         raise ValueError(
             f"distractors_num must be >= 0, got {config.distractors_num}"
-        )
-    if config.distractors_num is not None and config.distractor_pct is not None:
-        raise ValueError(
-            "distractors_num and distractor_pct cannot both be set"
         )
     if config.key_len < 1:
         raise ValueError(f"key_len must be >= 1, got {config.key_len}")
@@ -926,13 +875,8 @@ def validate_params(config: Config) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
-CSV_COLUMNS: list[str] = [
-    "run", "haystack_size", "depth_pct", "correct", "expected", "actual",
-    "prompt_tokens", "completion_tokens", "total_tokens", "latency_ms",
-]
 
-
-def main() -> None:
+def _parse_arguments() -> argparse.Namespace :
     """Parse CLI arguments, run experiments, and write results to CSV."""
     parser = argparse.ArgumentParser(
         description="Homogeneous Needle-in-a-Haystack benchmark"
@@ -975,145 +919,114 @@ def main() -> None:
     parser.add_argument("--output", default="results.csv",
                         help="Output CSV path (default: results.csv)")
 
-    args = parser.parse_args()
+    args: argparse.Namespace = parser.parse_args()
+    return args
 
-    start_time = datetime.datetime.now()
-    print(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+def _create_configuration() -> Config:
+    args: argparse.Namespace = _parse_arguments()
+
+    actual_real_needles = min(args.haystack_num, args.needles_num)
+    actual_distractors = resolve_distractors_num(
+        actual_real_needles, args.distractors_num, args.distractor_pct
+    )
+    actual_seed = args.seed if args.seed is not None else secrets.randbits(31)
+    actual_show = args.show or "all"
 
     config = Config(
         endpoint=args.endpoint,
+        output_filename=args.output,
+        show=actual_show,
         model=args.model,
         key_len=args.key_len,
         val_min=args.val_min,
         val_max=args.val_max,
         haystack_num=args.haystack_num,
-        needles_num=args.needles_num,
-        distractor_pct=args.distractor_pct,
-        distractors_num=args.distractors_num,
+        needles_num=actual_real_needles,
+        distractors_num=actual_distractors,
         temperature=args.temperature,
         max_tokens=args.max_tokens,
         timeout=args.timeout,
+        repeat=args.repeat,
         full=args.full,
+        seed=actual_seed,
         fuzz=args.fuzz,
     )
 
-    validate_params(config)
+    _validate_params(config)
 
-    seed = args.seed if args.seed is not None else secrets.randbits(31)
-    actual_real_needles = min(args.haystack_num, args.needles_num)
-    actual_distractors = resolve_distractors_num(
-        actual_real_needles, args.distractors_num, args.distractor_pct
-    )
-    actual_total = actual_real_needles + actual_distractors
-    _print_config(config, seed, actual_real_needles, actual_distractors,
-                 actual_total, args)
+    return config
 
-    all_rows: list[ResultRow] = []
-    all_stats: list[RunStats] = []
-    timed_out_runs: list[int] = []
-    truncated_runs: list[int] = []
-    for run_idx in range(args.repeat):
-        print(f"Run {run_idx + 1}/{args.repeat}...", end=" ", flush=True)
+
+def _print_config(config: Config) -> None:
+    """Print benchmark configuration parameters before starting runs."""
+    print(f"Seed: {config.seed}")
+    print(f"Endpoint: {config.endpoint}")
+    total_needles = config.needles_num + config.distractors_num
+    distractors_pct = int(config.distractors_num * 100.0 / total_needles)
+    print(f"Haystack: {config.haystack_num} pairs, {total_needles} needles "
+          f"({config.needles_num} real + {config.distractors_num} distractors, "
+          f"{distractors_pct*100:.0f}% distractors)")
+    print(f"Output: {config.output_filename}")
+    print()
+
+
+def main() -> None:
+    start_time = datetime.datetime.now()
+    print(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+    config: Config = _create_configuration()
+    _print_config(config)
+
+    global_result = GlobalResult()
+
+    for run_idx in range(config.repeat):
+        print(f"Run {run_idx + 1}/{config.repeat}...", end=" ", flush=True)
         try:
-            run_seed = seed + run_idx
-            rows, model_name, stats = run_single_experiment(
-                run_idx, config, run_seed, show=args.show
+            model_result: ModelResult = run_single_experiment(
+                run_idx, config, config.show
             )
-            all_rows.extend(rows)
-            all_stats.append(stats)
-            error = stats.get("error")
-            truncated = stats.get("truncated")
-            if error:
-                timed_out_runs.append(run_idx + 1)
-                print(f"model={model_name}, ERROR: {error}")
-            elif truncated:
-                truncated_runs.append(run_idx + 1)
-                print(f"model={model_name}, OUTPUT TRUNCATED")
-            elif rows:
-                correct_count = sum(1 for r in rows if r.correct == 1)
-                print(f"model={model_name}, "
-                      f"accuracy={correct_count}/{len(rows)} "
-                      f"({100*correct_count/len(rows):.1f}%)")
-            else:
-                print(f"model={model_name}, no results")
+
+            status = global_result.add_model_result(run_idx, model_result)
+            match status:
+                case GlobalResultType.OK:
+                    correct_count = sum(1 for r in model_result.rows if r.correct == 1)
+                    print(f"model={model_result.model_name}, "
+                        f"accuracy={correct_count}/{len(model_result.rows)} "
+                        f"({100*correct_count/len(model_result.rows):.1f}%)")
+                case GlobalResultType.TRUNCATED:
+                    print(f"model={model_result.model_name}, OUTPUT TRUNCATED")
+                case GlobalResultType.NO_RESULTS:
+                    print(f"model={model_result.model_name}, NO RESULTS")
+
         except HaystackQueryError as e:
-            timed_out_runs.append(run_idx + 1)
+            global_result.timed_out_runs.append(run_idx + 1)
             print()
             print("=" * 60)
-            print(f"Run {run_idx + 1} — {e}")
+            print(f"QUERY ERROR: Run {run_idx + 1} — {e}")
             print("=" * 60)
             print()
         except Exception as e:
             print(f"FAILED: {e}", file=sys.stderr)
 
-    with open(args.output, "w", newline="") as f:
+    with open(config.output_filename, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
         writer.writeheader()
-        writer.writerows(asdict(r) for r in all_rows)
+        writer.writerows(asdict(r) for r in global_result.all_rows)
 
     _print_summary(
         config=config,
-        seed=seed,
-        summary=Summary(
-            actual_real_needles=actual_real_needles,
-            actual_distractors=actual_distractors,
-            actual_total=actual_total,
-        ),
-        all_rows=all_rows,
-        all_stats=all_stats,
-        timed_out_runs=timed_out_runs,
-        truncated_runs=truncated_runs,
-        output_file=args.output,
-        repeat=args.repeat,
+        result=global_result,
         start_time=start_time,
     )
 
 
-def _print_config(
-    config: Config,
-    seed: int,
-    actual_real_needles: int,
-    actual_distractors: int,
-    actual_total: int,
-    args: argparse.Namespace,
-) -> None:
-    """Print benchmark configuration parameters before starting runs."""
-    pct = args.distractor_pct if args.distractor_pct is not None else 0.08
-    print(f"Seed: {seed}")
-    print(f"Endpoint: {args.endpoint}")
-    print(f"Haystack: {config.haystack_num} pairs, {actual_total} needles "
-          f"({actual_real_needles} real + {actual_distractors} distractors, "
-          f"{pct*100:.0f}% distractors)")
-    print(f"Output: {args.output}")
-    print()
-
-
 def _print_summary(
     config: Config,
-    seed: int,
-    summary: Summary,
-    all_rows: list[ResultRow],
-    all_stats: list[RunStats],
-    timed_out_runs: list[int],
-    truncated_runs: list[int],
-    output_file: str,
-    repeat: int = 1,
-    *,
-    start_time: datetime.datetime | None = None,
+    result: GlobalResult,
+    start_time: datetime.datetime
 ) -> None:
-    """Print a comprehensive summary of the experiment.
-
-    Args:
-        config: Benchmark configuration used.
-        seed: Random seed used for reproducibility.
-        summary: Computed experiment summary data.
-        all_rows: All result rows from all runs.
-        all_stats: Per-run statistics.
-        timed_out_runs: List of run indices that timed out.
-        truncated_runs: List of run indices that were truncated.
-        output_file: Path to the output CSV file.
-        repeat: Number of independent runs.
-    """
+    """Print a comprehensive summary of the experiment."""
     print()
     print("=" * 60)
     print("SUMMARY")
@@ -1122,27 +1035,25 @@ def _print_summary(
     # Configuration
     print("\nConfiguration:")
     print(f"  Haystack size:     {config.haystack_num}")
-    print(f"  Num needles:       {summary.actual_total} ({summary.actual_real_needles} real + {summary.actual_distractors} distractors)")
-    if config.distractors_num is not None:
-        print(f"  Distractors:       {config.distractors_num} (exact count)")
-    elif config.distractor_pct is not None:
-        print(f"  Distractor pct:    {config.distractor_pct * 100:.1f}%")
+    print(f"  Num needles:       {config.needles_num + config.distractors_num} ({config.needles_num} real + {config.distractors_num} distractors)")
+    distractor_pct = config.distractors_num / (config.needles_num + config.distractors_num)
+    print(f"  Distractors:       {config.distractors_num} (exact count) ({distractor_pct * 100:.1f}%)")
     print(f"  Key length:        {config.key_len}")
     print(f"  Value range:       {config.val_min} - {config.val_max}")
     print(f"  Temperature:       {config.temperature}")
     print(f"  Max tokens:        {config.max_tokens}")
     print(f"  Timeout:           {config.timeout}s")
-    print(f"  Seed:              {seed}")
-    print(f"  Repeat:            {repeat}")
+    print(f"  Seed:              {config.seed}")
+    print(f"  Repeat:            {config.repeat}")
     print(f"  Endpoint:          {config.endpoint}")
 
     # Per-run results
-    if all_stats:
+    if result.all_stats:
         print("\nPer-run results:")
         run_rows = {}
-        for r in all_rows:
+        for r in result.all_rows:
             run_rows.setdefault(r.run, []).append(r)
-        for i, stats in enumerate(all_stats):
+        for i, stats in enumerate(result.all_stats):
             model_name = stats.get("model_name", "N/A") or "N/A"
             total_tokens = stats.get("total_tokens", 0) or 0
             avg_lat = stats.get("avg_latency_ms", 0) or 0
@@ -1169,12 +1080,12 @@ def _print_summary(
             print()
 
     # Overall results
-    total = len(all_rows)
-    correct = sum(1 for r in all_rows if r.correct == 1)
+    total = len(result.all_rows)
+    correct = sum(1 for r in result.all_rows if r.correct == 1)
     if total > 0:
-        total_tokens_all = sum((float(s.get("total_tokens") or 0) for s in all_stats), 0.0)
-        total_latency_all = sum((float(s.get("total_latency_ms") or 0) for s in all_stats), 0.0)
-        total_completion_all = sum((float(s.get("total_completion") or 0) for s in all_stats), 0.0)
+        total_tokens_all = sum((float(s.get("total_tokens") or 0) for s in result.all_stats), 0.0)
+        total_latency_all = sum((float(s.get("total_latency_ms") or 0) for s in result.all_stats), 0.0)
+        total_completion_all = sum((float(s.get("total_completion") or 0) for s in result.all_stats), 0.0)
         print("\nOverall results:")
         print(f"  Accuracy:            {correct}/{total} ({100*correct/total:.1f}%)")
         print(f"  Total tokens:        {total_tokens_all}")
@@ -1184,15 +1095,15 @@ def _print_summary(
             print(f"  Avg tokens/sec:      {total_completion_all/(total_latency_all/1000):.1f}")
 
     # Issues
-    if timed_out_runs or truncated_runs:
+    if result.timed_out_runs or result.truncated_runs:
         print("\nIssues:")
-        if timed_out_runs:
-            print(f"  Timed out runs:    {timed_out_runs}")
-        if truncated_runs:
-            print(f"  Truncated runs:    {truncated_runs}")
+        if result.timed_out_runs:
+            print(f"  Timed out runs:    {result.timed_out_runs}")
+        if result.truncated_runs:
+            print(f"  Truncated runs:    {result.truncated_runs}")
             print("  (completion_tokens reached max_tokens — model was cut off)")
 
-    print(f"\nOutput: {output_file}")
+    print(f"\nOutput: {config.output_filename}")
 
     elapsed = datetime.datetime.now() - start_time if start_time else datetime.timedelta(0)
     minutes, remainder = divmod(int(elapsed.total_seconds()), 60)
