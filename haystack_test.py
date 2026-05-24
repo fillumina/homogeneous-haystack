@@ -1069,15 +1069,16 @@ def _print_run_detail(
         print(f"  TPS:             {tps:.1f}")
         print(f"  Time:            {summary.total_time_sec:.1f}s")
 
-    # Print failure buckets in a 2-row table
-    labels = ["0-10%", "10-20%", "20-30%", "30-40%", "40-50%",
-              "50-60%", "60-70%", "70-80%", "80-90%", "90-100%"]
-    max_val = max(summary.ctx_pos_buckets) if summary.ctx_pos_buckets else 0
-    col_width = max(len(l) for l in labels) + 1
-    col_width = max(col_width, len(str(max_val)) + 1)
-    print("  Failures by 10% interval:")
-    print("    " + " ".join(_pad_right(l, col_width) for l in labels))
-    print("    " + " ".join(_pad_right(b, col_width) for b in summary.ctx_pos_buckets))
+    # Print failure buckets in a 2-row table (only if there are failures)
+    if any(summary.ctx_pos_buckets) or summary.distractor_failures > 0:
+        labels = ["0-10%", "10-20%", "20-30%", "30-40%", "40-50%",
+                  "50-60%", "60-70%", "70-80%", "80-90%", "90-100%"]
+        max_val = max(summary.ctx_pos_buckets) if summary.ctx_pos_buckets else 0
+        col_width = max(len(l) for l in labels) + 1
+        col_width = max(col_width, len(str(max_val)) + 1)
+        print("  Failures by 10% interval:")
+        print("    " + " ".join(_pad_right(l, col_width) for l in labels))
+        print("    " + " ".join(_pad_right(b, col_width) for b in summary.ctx_pos_buckets))
 
     print()
 
