@@ -162,8 +162,8 @@ class TestValidation:
             key_len=8, val_min=10000, val_max=99999,
             haystack_num=100, needles_num=50,
             distractors_num=0,
-            temperature=0.0, max_tokens=240000, timeout=7200, full=False,
-            output_filename="results.csv", show="all", repeat=1, seed=42,
+            temperature=0.0, max_tokens=240000, timeout=7200,
+            output_filename="results.csv", verbosity="medium", repeat=1, seed=42,
         )
         for k, v in overrides.items():
             setattr(config, k, v)
@@ -177,8 +177,8 @@ class TestValidation:
             key_len=8, val_min=10000, val_max=99999,
             haystack_num=100, needles_num=50,
             distractors_num=0,
-            temperature=0.0, max_tokens=240000, timeout=7200, full=False,
-            output_filename="results.csv", show="all", repeat=1, seed=42,
+            temperature=0.0, max_tokens=240000, timeout=7200,
+            output_filename="results.csv", verbosity="medium", repeat=1, seed=42,
         )
         _validate_params(config)
 
@@ -189,8 +189,8 @@ class TestValidation:
             key_len=8, val_min=10000, val_max=99999,
             haystack_num=100, needles_num=50,
             distractors_num=0,
-            temperature=0.0, max_tokens=240000, timeout=7200, full=False,
-            output_filename="results.csv", show="all", repeat=1, seed=42,
+            temperature=0.0, max_tokens=240000, timeout=7200,
+            output_filename="results.csv", verbosity="medium", repeat=1, seed=42,
         )
         _validate_params(config)
 

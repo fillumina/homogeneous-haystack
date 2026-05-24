@@ -28,6 +28,13 @@ from typing import TypedDict
 from enum import Enum, auto
 
 
+class Verbosity(Enum):
+    MINIMAL = "minimal"
+    MEDIUM = "medium"
+    FULL = "full"
+    DEBUG = "debug"
+
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -147,7 +154,7 @@ class Needle:
 class Config:
     endpoint: str
     output_filename: str
-    show: str
+    verbosity: str
     k_quant: str
     v_quant: str
     note: str
@@ -161,10 +168,17 @@ class Config:
     max_tokens: int
     timeout: int
     repeat: int
-    full: bool
     seed: int
     fuzz: float = 0.49
     timestamp: str = ""
+
+
+@dataclass
+class DebugContext:
+    messages: list[Message] | None = None
+    raw_response: ApiResponseBody | None = None
+    response_text: str = ""
+    model_name: str = ""
 
 
 @dataclass
@@ -172,6 +186,10 @@ class ModelResult:
     rows: list[ResultRow]
     model_name: str
     stats: RunStats
+    pairs: list[HaystackPair] = field(default_factory=list)
+    needles: list[Needle] = field(default_factory=list)
+    parsed: dict[str, str] = field(default_factory=dict)
+    debug: DebugContext = field(default_factory=DebugContext)
 
 
 class GlobalResultType(Enum):
@@ -239,13 +257,6 @@ class QueryResult:
     usage: ApiUsage | None
     latency_ms: float
     truncated: bool
-
-@dataclass
-class DebugContext:
-    messages: list[Message] | None = None
-    raw_response: ApiResponseBody | None = None
-    response_text: str = ""
-    model_name: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -762,51 +773,25 @@ def _build_rows(
     return rows
 
 
-def _print_results(
+def _print_needle_results(
     run_index: int,
     needles: list[Needle],
     pairs: list[HaystackPair],
     parsed: dict[str, str],
     *,
-    show: str | None = None,
-    is_full: bool,
+    verbosity: str,
     debug: DebugContext,
 ) -> None:
-    """Print experiment results and optional debug output.
+    """Print run header and needle/distractor results.
 
     Args:
         run_index: The experiment run number.
         needles: List of needles that were queried.
         pairs: Full list of haystack pairs.
         parsed: Parsed key -> value results from the model.
-        show: Which debug output to show ("prompt", "response", "all", or None).
-        is_full: Whether to print full untruncated content.
-        debug: Context containing messages, raw response, response text, and model name.
+        verbosity: Current verbosity level.
+        debug: Context containing model name.
     """
-    messages = debug.messages
-    raw_response = debug.raw_response
-    response_text = debug.response_text
-
-    print()
-    print("=" * 60)
-    print(f"Run {run_index} — model={debug.model_name}")
-    print("=" * 60)
-
-    if messages is not None and (show in ("prompt", "all") or is_full):
-        print(f"\n--- ALL MESSAGES ({len(messages)} messages) ---")
-        for msg in messages:
-            _print_message(msg, is_full)
-
-    if (show in ("response", "all") or is_full):
-        print("\n--- RAW RESPONSE (JSON) ---")
-        if raw_response is not None:
-            print(json.dumps(raw_response, indent=2, default=str))
-        else:
-            print("(no response received)")
-        print("\n--- CONTENT FIELD ---")
-        print(repr(response_text))
-
-    print("\n--- PARSED RESULTS ---")
     scored = list(score_needles(needles, parsed))
     real_needles = []
     distractor_needles = []
@@ -816,22 +801,78 @@ def _print_results(
         else:
             real_needles.append((needle, score))
 
-    for needle, score in sorted(real_needles, key=lambda x: x[0].index):
-        depth = round(
-            needle.index / (len(pairs) - 1) * 100, 1
-        ) if len(pairs) > 1 else 0.0
-        status = "OK" if score.correct else "FAIL"
-        print(f"  [{status}] {needle.key} (depth {depth}%) "
-              f"expected={score.expected!r} actual={score.actual!r}")
+    show_all = verbosity in ("full", "debug")
+    show_failed = verbosity in ("medium", "full", "debug")
+
+    print()
+    print("=" * 60)
+    print(f"Run {run_index} — model={debug.model_name}")
+    print("=" * 60)
+
+    print("\n--- Parsed Results ---")
+    if show_all:
+        for needle, score in sorted(real_needles, key=lambda x: x[0].index):
+            depth = round(
+                needle.index / (len(pairs) - 1) * 100, 1
+            ) if len(pairs) > 1 else 0.0
+            status = "OK" if score.correct else "FAIL"
+            print(f"  [{status}] {needle.key} (depth {depth}%) "
+                  f"expected={score.expected!r} actual={score.actual!r}")
+    else:
+        failed = [(n, s) for n, s in sorted(real_needles, key=lambda x: x[0].index) if not s.correct]
+        if failed:
+            for needle, score in failed:
+                depth = round(
+                    needle.index / (len(pairs) - 1) * 100, 1
+                ) if len(pairs) > 1 else 0.0
+                print(f"  [FAIL] {needle.key} (depth {depth}%) "
+                      f"expected={score.expected!r} actual={score.actual!r}")
+        else:
+            print("  All needles correct.")
 
     if distractor_needles:
         print(f"\n  --- Distractors ({len(distractor_needles)}) ---")
-        for needle, score in sorted(distractor_needles, key=lambda x: x[0].key):
-            status = "OK" if score.correct else "FAIL"
-            print(f"  [{status}] {needle.key} "
-                  f"(distractor, expected=not_found actual={score.actual!r})")
+        if show_all:
+            for needle, score in sorted(distractor_needles, key=lambda x: x[0].key):
+                status = "OK" if score.correct else "FAIL"
+                print(f"  [{status}] {needle.key} "
+                      f"(distractor, expected=not_found actual={score.actual!r})")
+        else:
+            failed = [(n, s) for n, s in sorted(distractor_needles, key=lambda x: x[0].key) if not s.correct]
+            if failed:
+                for needle, score in failed:
+                    print(f"  [FAIL] {needle.key} "
+                          f"(distractor, expected=not_found actual={score.actual!r})")
+            else:
+                print("  All distractors correct.")
+
     print("=" * 60)
     print()
+
+
+def _print_debug_context(debug: DebugContext) -> None:
+    """Print debug output: messages and raw response.
+
+    Args:
+        debug: Context containing messages, raw response, response text, and model name.
+    """
+    messages = debug.messages
+    raw_response = debug.raw_response
+    response_text = debug.response_text
+
+    if messages is not None:
+        print(f"\n--- ALL MESSAGES ({len(messages)} messages) ---")
+        for msg in messages:
+            _print_message(msg, is_full=True)
+
+    if raw_response is not None:
+        print("\n--- RAW RESPONSE (JSON) ---")
+        print(json.dumps(raw_response, indent=2, default=str))
+    else:
+        print("\n--- RAW RESPONSE (JSON) ---")
+        print("(no response received)")
+    print("\n--- CONTENT FIELD ---")
+    print(repr(response_text))
 
 
 def _print_message(msg: Message, is_full: bool) -> None:
@@ -853,10 +894,11 @@ def _print_message(msg: Message, is_full: bool) -> None:
 def run_single_experiment(
     run_index: int,
     config: Config,
-    show: str | None = None
 ) -> ModelResult:
-    """Run one complete experiment: generate, query, score, return rows."""
+    """Run one complete experiment: generate, query, score, return rows.
 
+    Returns data only — printing is handled by the caller (main).
+    """
     # each run gets its onw seed
     random.seed(config.seed + run_index)
 
@@ -893,14 +935,15 @@ def run_single_experiment(
         total_latency / len(needles), 1
     ) if needles else 0.0
 
-    if show or config.full:
-        _print_results(
-            run_index, needles, pairs, result.parsed,
-            show=show, is_full=config.full,
-            debug=debug,
-        )
-
-    return ModelResult(rows, debug.model_name, stats)
+    return ModelResult(
+        rows=rows,
+        model_name=debug.model_name,
+        stats=stats,
+        pairs=pairs,
+        needles=needles,
+        parsed=result.parsed,
+        debug=debug,
+    )
 
 
 def _validate_params(config: Config) -> None:
@@ -1018,6 +1061,35 @@ def compute_experiment_summary(
 # ---------------------------------------------------------------------------
 # Per-run summary helpers
 # ---------------------------------------------------------------------------
+
+
+def _print_run_minimal(
+    run_number: int,
+    run_total: int,
+    summary: ExperimentSummary,
+    stats: RunStats,
+    run_rows: list[ResultRow],
+    timestamp: str,
+) -> None:
+    """Print a single-line summary for minimal verbosity.
+
+    Format: timestamp Run N/M: Needles X% | Distractors Y%
+    """
+    needle_rows = [r for r in run_rows if isinstance(r.expected, int)]
+    distractor_rows = [r for r in run_rows if not isinstance(r.expected, int)]
+
+    error = stats.get("error")
+    truncated = stats.get("truncated")
+
+    if error:
+        print(f"{timestamp} Run {run_number}/{run_total}: ERROR ({error})")
+    elif truncated:
+        needle_pct = f"{100*sum(1 for r in needle_rows if r.correct==1)/len(needle_rows):.1f}%" if needle_rows else "N/A"
+        print(f"{timestamp} Run {run_number}/{run_total}: TRUNCATED | Needles {needle_pct}")
+    else:
+        needle_pct = f"{100*sum(1 for r in needle_rows if r.correct==1)/len(needle_rows):.1f}%" if needle_rows else "N/A"
+        distractor_pct = f"{100*sum(1 for r in distractor_rows if r.correct==1)/len(distractor_rows):.1f}%" if distractor_rows else "N/A"
+        print(f"{timestamp} Run {run_number}/{run_total}: Needles {needle_pct} | Distractors {distractor_pct}")
 
 
 def _print_run_detail(
@@ -1183,10 +1255,9 @@ def _parse_arguments() -> argparse.Namespace :
                         help="Max tokens per response (default: 240000)")
     parser.add_argument("--timeout", type=int, default=7200,
                         help="Request timeout in seconds (default: 7200)")
-    parser.add_argument("--show", choices=["prompt", "response", "all"],
-                        help="Print prompt/response for debugging (prompt=response/all)")
-    parser.add_argument("--full", action="store_true",
-                        help="Print full untruncated prompt and response")
+    parser.add_argument("--verbosity", "-v", choices=["minimal", "medium", "full", "debug"],
+                        default="medium",
+                        help="Output verbosity level one of 'minimal', 'medium', 'full', 'debug' (default: medium)")
     parser.add_argument("--repeat", type=int, default=1,
                         help="Number of independent runs (default: 1)")
     parser.add_argument("--seed", type=int, default=None,
@@ -1214,12 +1285,11 @@ def _create_configuration() -> Config:
         actual_real_needles, args.distractors_num, args.distractor_pct
     )
     actual_seed = args.seed if args.seed is not None else secrets.randbits(31)
-    actual_show = args.show or "all"
 
     config = Config(
         endpoint=args.endpoint,
         output_filename=args.output,
-        show=actual_show,
+        verbosity=args.verbosity,
         k_quant=args.k_quant,
         v_quant=args.v_quant,
         note=args.note,
@@ -1233,7 +1303,6 @@ def _create_configuration() -> Config:
         max_tokens=args.max_tokens,
         timeout=args.timeout,
         repeat=args.repeat,
-        full=args.full,
         seed=actual_seed,
         fuzz=args.fuzz,
         timestamp=datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
@@ -1258,19 +1327,20 @@ def _print_config(config: Config) -> None:
 
 
 def main() -> None:
+    config: Config = _create_configuration()
     start_time = datetime.datetime.now()
     print(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-
-    config: Config = _create_configuration()
     _print_config(config)
 
     global_result = GlobalResult()
 
+    is_minimal = config.verbosity == "minimal"
+    is_debug = config.verbosity == "debug"
+
     for run_idx in range(config.repeat):
-        print(f"Run {run_idx + 1}/{config.repeat}...", end=" ", flush=True)
         try:
             model_result: ModelResult = run_single_experiment(
-                run_idx, config, config.show
+                run_idx, config
             )
 
             status = global_result.add_model_result(run_idx, model_result)
@@ -1283,13 +1353,41 @@ def main() -> None:
                 run_timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 # Write row to CSV immediately
                 _write_summary_row(config, model_result.model_name, summary)
-                # Print detailed per-run output
+                # Print per-run output based on verbosity
                 if status == GlobalResultType.OK:
-                    print(f"Run {run_idx + 1}:")
-                    _print_run_detail(run_idx + 1, summary, stats, run_rows_for_this, run_timestamp)
+                    print(f"Run {run_idx + 1}/{config.repeat}: Done!")
+                    if is_minimal:
+                        _print_run_minimal(
+                            run_idx + 1, config.repeat,
+                            summary, stats, run_rows_for_this, run_timestamp
+                        )
+                    else:
+                        _print_run_detail(run_idx + 1, summary, stats, run_rows_for_this, run_timestamp)
+                        _print_needle_results(
+                            run_idx + 1, model_result.needles, model_result.pairs,
+                            parsed=model_result.parsed,
+                            verbosity=config.verbosity,
+                            debug=model_result.debug,
+                        )
+                    if is_debug:
+                        _print_debug_context(model_result.debug)
                 elif status == GlobalResultType.TRUNCATED:
-                    print(f"Run {run_idx + 1}:")
-                    _print_run_detail(run_idx + 1, summary, stats, run_rows_for_this, run_timestamp)
+                    print(f"Run {run_idx + 1}/{config.repeat}: Done!")
+                    if is_minimal:
+                        _print_run_minimal(
+                            run_idx + 1, config.repeat,
+                            summary, stats, run_rows_for_this, run_timestamp
+                        )
+                    else:
+                        _print_run_detail(run_idx + 1, summary, stats, run_rows_for_this, run_timestamp)
+                        _print_needle_results(
+                            run_idx + 1, model_result.needles, model_result.pairs,
+                            parsed=model_result.parsed,
+                            verbosity=config.verbosity,
+                            debug=model_result.debug,
+                        )
+                    if is_debug:
+                        _print_debug_context(model_result.debug)
                 else:
                     print(f"model={model_result.model_name}, NO RESULTS")
 
@@ -1324,44 +1422,66 @@ def _print_summary(
     model_name: str,
 ) -> None:
     """Print a comprehensive summary of the experiment."""
+    is_minimal = config.verbosity == "minimal"
+
     print()
     print("=" * 60)
     print("SUMMARY")
     print("=" * 60)
 
-    # Configuration
-    print("\nConfiguration:")
-    print(f"  Timestamp:       {config.timestamp}")
-    print(f"  Model:           {model_name}")
-    print(f"  Haystack size:   {config.haystack_num}")
-    print(f"  Num needles:     {config.needles_num + config.distractors_num} ({config.needles_num} real + {config.distractors_num} distractors)")
-    distractor_pct = config.distractors_num / (config.needles_num + config.distractors_num)
-    print(f"  Distractors:     {config.distractors_num} (exact count) ({distractor_pct * 100:.1f}%)")
-    print(f"  Key length:      {config.key_len}")
-    print(f"  Value range:     {config.val_min} - {config.val_max}")
-    print(f"  Temperature:     {config.temperature}")
-    print(f"  Max tokens:      {config.max_tokens}")
-    print(f"  Timeout:         {config.timeout}s")
-    print(f"  Seed:            {config.seed}")
-    print(f"  Repeat:          {config.repeat}")
-    print(f"  Endpoint:        {config.endpoint}")
-    if config.k_quant:
-        print(f"  K quant:         {config.k_quant}")
-    if config.v_quant:
-        print(f"  V quant:         {config.v_quant}")
-    if config.note:
-        print(f"  Note:            {config.note}")
+    if is_minimal:
+        print(f"  Model:           {model_name}")
+        print(f"  Haystack size:   {config.haystack_num}")
+        print(f"  Seeds:           {config.seed}")
+        print(f"  Repeat:          {config.repeat}")
+    else:
+        # Configuration
+        print("\nConfiguration:")
+        print(f"  Timestamp:       {config.timestamp}")
+        print(f"  Model:           {model_name}")
+        print(f"  Haystack size:   {config.haystack_num}")
+        print(f"  Num needles:     {config.needles_num + config.distractors_num} ({config.needles_num} real + {config.distractors_num} distractors)")
+        distractor_pct = config.distractors_num / (config.needles_num + config.distractors_num)
+        print(f"  Distractors:     {config.distractors_num} (exact count) ({distractor_pct * 100:.1f}%)")
+        print(f"  Key length:      {config.key_len}")
+        print(f"  Value range:     {config.val_min} - {config.val_max}")
+        print(f"  Temperature:     {config.temperature}")
+        print(f"  Max tokens:      {config.max_tokens}")
+        print(f"  Timeout:         {config.timeout}s")
+        print(f"  Seed:            {config.seed}")
+        print(f"  Repeat:          {config.repeat}")
+        print(f"  Endpoint:        {config.endpoint}")
+        if config.k_quant:
+            print(f"  K quant:         {config.k_quant}")
+        if config.v_quant:
+            print(f"  V quant:         {config.v_quant}")
+        if config.note:
+            print(f"  Note:            {config.note}")
 
-    # Per-run results (merged: combines run-level stats with experiment summary details)
+    # Per-run results
     if summaries:
-        print("\nPer-run results:")
-        run_rows_by_run: dict[int, list[ResultRow]] = {}
-        for r in result.all_rows:
-            run_rows_by_run.setdefault(r.run, []).append(r)
-        for i, s in enumerate(summaries):
-            stats = result.all_stats[i] if i < len(result.all_stats) else {}
-            run_rows_for_this = run_rows_by_run.get(i, [])
-            _print_run_detail(i + 1, s, stats, run_rows_for_this, timestamp=None)
+        if is_minimal:
+            print("\nPer-run results:")
+            run_rows_by_run: dict[int, list[ResultRow]] = {}
+            for r in result.all_rows:
+                run_rows_by_run.setdefault(r.run, []).append(r)
+            for i, s in enumerate(summaries):
+                stats = result.all_stats[i] if i < len(result.all_stats) else {}
+                run_rows_for_this = run_rows_by_run.get(i, [])
+                needle_rows = [r for r in run_rows_for_this if isinstance(r.expected, int)]
+                distractor_rows = [r for r in run_rows_for_this if not isinstance(r.expected, int)]
+                needle_pct = f"{100*sum(1 for r in needle_rows if r.correct==1)/len(needle_rows):.1f}%" if needle_rows else "N/A"
+                distractor_pct_run = f"{100*sum(1 for r in distractor_rows if r.correct==1)/len(distractor_rows):.1f}%" if distractor_rows else "N/A"
+                print(f"  Run {i+1}: Needles {needle_pct} | Distractors {distractor_pct_run}")
+        else:
+            print("\nPer-run results:")
+            run_rows_by_run: dict[int, list[ResultRow]] = {}
+            for r in result.all_rows:
+                run_rows_by_run.setdefault(r.run, []).append(r)
+            for i, s in enumerate(summaries):
+                stats = result.all_stats[i] if i < len(result.all_stats) else {}
+                run_rows_for_this = run_rows_by_run.get(i, [])
+                _print_run_detail(i + 1, s, stats, run_rows_for_this, timestamp=None)
 
     # Overall results
     total = len(result.all_rows)

@@ -243,11 +243,10 @@ class TestQueryModel:
             temperature=0.0,
             max_tokens=max_tokens,
             timeout=10,
-            full=False,
             seed=42,
             repeat=1,
             output_filename="results.csv",
-            show="all",
+            verbosity="medium",
         )
 
     def _make_needles(self):

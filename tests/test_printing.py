@@ -2,10 +2,15 @@ import datetime
 
 from haystack_test import (
     Config,
+    DebugContext,
     ExperimentSummary,
     GlobalResult,
+    Needle,
     ResultRow,
+    _print_debug_context,
     _print_message,
+    _print_needle_results,
+    _print_run_minimal,
     _print_summary,
     _truncate,
 )
@@ -68,11 +73,10 @@ class TestPrintSummary:
             temperature=0.0,
             max_tokens=240000,
             timeout=7200,
-            full=False,
             seed=42,
             repeat=1,
             output_filename="results.csv",
-            show="all",
+            verbosity="medium",
             timestamp="2024-01-01T10:00:00",
         )
 
@@ -264,3 +268,187 @@ class TestPrintSummary:
         captured = capsys.readouterr()
         assert "Needle accuracy" in captured.out
         assert "Distractor accuracy: N/A (no distractors)" in captured.out
+
+
+class TestPrintNeedleResults:
+    def _make_needles(self):
+        return [
+            Needle(index=10, key="AAAA", expected=12345, is_distractor=False),
+            Needle(index=20, key="BBBB", expected=54321, is_distractor=False),
+            Needle(index=30, key="CCCC", expected=None, is_distractor=True),
+        ]
+
+    def _make_debug(self):
+        return DebugContext(model_name="test-model")
+
+    def test_prints_all_for_full_verbosity(self, capsys):
+        needles = self._make_needles()
+        parsed = {"AAAA": "12345", "BBBB": "wrong", "CCCC": "HALLUCINATED"}
+        pairs = [("X", 1)] * 100
+
+        _print_needle_results(
+            1, needles, pairs, parsed,
+            verbosity="full",
+            debug=self._make_debug(),
+        )
+
+        captured = capsys.readouterr()
+        assert "AAAA" in captured.out
+        assert "BBBB" in captured.out
+        assert "CCCC" in captured.out
+        assert "[OK] AAAA" in captured.out
+        assert "[FAIL] BBBB" in captured.out
+        assert "[FAIL] CCCC" in captured.out
+
+    def test_prints_failed_only_for_medium_verbosity(self, capsys):
+        needles = self._make_needles()
+        parsed = {"AAAA": "12345", "BBBB": "wrong", "CCCC": "HALLUCINATED"}
+        pairs = [("X", 1)] * 100
+
+        _print_needle_results(
+            1, needles, pairs, parsed,
+            verbosity="medium",
+            debug=self._make_debug(),
+        )
+
+        captured = capsys.readouterr()
+        assert "AAAA" not in captured.out
+        assert "BBBB" in captured.out
+        assert "CCCC" in captured.out
+        assert "All needles correct" not in captured.out
+
+    def test_prints_success_message_when_all_ok(self, capsys):
+        needles = self._make_needles()
+        parsed = {"AAAA": "12345", "BBBB": "54321"}
+        pairs = [("X", 1)] * 100
+
+        _print_needle_results(
+            1, needles, pairs, parsed,
+            verbosity="medium",
+            debug=self._make_debug(),
+        )
+
+        captured = capsys.readouterr()
+        assert "All needles correct" in captured.out
+        assert "All distractors correct" in captured.out
+
+
+class TestPrintDebugContext:
+    def test_prints_messages_and_response(self, capsys):
+        debug = DebugContext(
+            messages=[
+                {"role": "system", "content": "system message"},
+                {"role": "user", "content": "user prompt"},
+            ],
+            raw_response={
+                "model": "test-model",
+                "choices": [{"message": {"content": "AAAA = 12345"}}],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110},
+            },
+            response_text="AAAA = 12345",
+            model_name="test-model",
+        )
+
+        _print_debug_context(debug)
+
+        captured = capsys.readouterr()
+        assert "ALL MESSAGES" in captured.out
+        assert "system message" in captured.out
+        assert "user prompt" in captured.out
+        assert "RAW RESPONSE" in captured.out
+        assert "test-model" in captured.out
+        assert "CONTENT FIELD" in captured.out
+
+    def test_handles_empty_response(self, capsys):
+        debug = DebugContext(
+            messages=None,
+            raw_response=None,
+            response_text="",
+            model_name="test-model",
+        )
+
+        _print_debug_context(debug)
+
+        captured = capsys.readouterr()
+        assert "(no response received)" in captured.out
+
+
+class TestPrintRunMinimal:
+    def test_prints_one_liner_with_accuracy(self, capsys):
+        rows = [
+            ResultRow(run=1, haystack_size=100, depth_pct=10.0, correct=1,
+                      expected=12345, actual="12345"),
+            ResultRow(run=1, haystack_size=100, depth_pct=20.0, correct=0,
+                      expected=54321, actual="wrong"),
+            ResultRow(run=1, haystack_size=100, depth_pct=30.0, correct=1,
+                      expected="", actual=""),
+        ]
+        stats = {
+            "total_tokens": 150, "total_latency_ms": 200.0,
+            "total_completion": 100, "error": None, "truncated": False,
+            "model_name": "test", "tokens_per_sec": 500.0, "avg_latency_ms": 20.0,
+        }
+        summary = ExperimentSummary(
+            prompt_tokens=100, completion_tokens=50, total_tokens=150,
+            total_pairs=100, needles_num=2, distractors_num=1,
+            needle_success_pct=50.0, distractor_success_pct=100.0,
+            tokens_per_sec=500.0, total_time_sec=0.2,
+            ctx_pos_buckets=[0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+            distractor_failures=0,
+        )
+
+        _print_run_minimal(1, 3, summary, stats, rows, "2024-01-01 10:00:00")
+
+        captured = capsys.readouterr()
+        assert "2024-01-01 10:00:00" in captured.out
+        assert "Run 1/3:" in captured.out
+        assert "50.0%" in captured.out
+        assert "100.0%" in captured.out
+
+    def test_prints_error_status(self, capsys):
+        rows: list[ResultRow] = []
+        stats = {
+            "total_tokens": 0, "total_latency_ms": 0,
+            "total_completion": 0, "error": "Connection refused",
+            "truncated": False, "model_name": "test",
+            "tokens_per_sec": 0, "avg_latency_ms": 0,
+        }
+        summary = ExperimentSummary(
+            prompt_tokens=0, completion_tokens=0, total_tokens=0,
+            total_pairs=100, needles_num=0, distractors_num=0,
+            needle_success_pct=0.0, distractor_success_pct=0.0,
+            tokens_per_sec=0, total_time_sec=0.0,
+            ctx_pos_buckets=[0] * 10, distractor_failures=0,
+        )
+
+        _print_run_minimal(2, 3, summary, stats, rows, "2024-01-01 10:05:00")
+
+        captured = capsys.readouterr()
+        assert "ERROR (Connection refused)" in captured.out
+
+    def test_prints_truncated_status(self, capsys):
+        rows = [
+            ResultRow(run=2, haystack_size=100, depth_pct=10.0, correct=1,
+                      expected=12345, actual="12345"),
+            ResultRow(run=2, haystack_size=100, depth_pct=20.0, correct=0,
+                      expected=54321, actual="wrong"),
+        ]
+        stats = {
+            "total_tokens": 150, "total_latency_ms": 200.0,
+            "total_completion": 100, "error": None, "truncated": True,
+            "model_name": "test", "tokens_per_sec": 500.0, "avg_latency_ms": 20.0,
+        }
+        summary = ExperimentSummary(
+            prompt_tokens=100, completion_tokens=50, total_tokens=150,
+            total_pairs=100, needles_num=2, distractors_num=0,
+            needle_success_pct=50.0, distractor_success_pct=0.0,
+            tokens_per_sec=500.0, total_time_sec=0.2,
+            ctx_pos_buckets=[0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+            distractor_failures=0,
+        )
+
+        _print_run_minimal(2, 3, summary, stats, rows, "2024-01-01 10:05:00")
+
+        captured = capsys.readouterr()
+        assert "TRUNCATED" in captured.out
+        assert "50.0%" in captured.out
