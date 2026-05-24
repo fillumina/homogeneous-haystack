@@ -1141,7 +1141,7 @@ def _parse_arguments() -> argparse.Namespace :
     parser.add_argument("--k-quant", default="",
                         help="KV-cache key quantization type (e.g. Q8_0, Q4_0, turbo4)")
     parser.add_argument("--v-quant", default="",
-                        help="KV-cache value quantization type (e.g. Q8_0, Q4_0)")
+                        help="KV-cache value quantization type (e.g. Q8_0, Q4_0, turbo4)")
     parser.add_argument("--note", default="",
                         help="Freeform note about this experiment")
 
