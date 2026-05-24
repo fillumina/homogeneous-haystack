@@ -1093,7 +1093,7 @@ def _print_needle_results(
     verbosity: str,
     debug: DebugContext,
 ) -> None:
-    """Print compact needle/distractor summary with optional per-needle detail.
+    """Print per-needle detail for full/debug verbosity.
 
     Args:
         run_index: The experiment run number.
@@ -1112,33 +1112,7 @@ def _print_needle_results(
         else:
             real_needles.append((needle, score))
 
-    needle_correct = sum(1 for _, s in real_needles if s.correct)
-    distractor_correct = sum(1 for _, s in distractor_needles if s.correct)
-
-    needle_label = "Needles accuracy:"
-    distractor_label = "Distractors accuracy:"
-    max_label = max(len(needle_label), len(distractor_label))
-
-    needle_status = "OK" if needle_correct == len(real_needles) else "FAIL"
-    distractor_status = "OK" if distractor_correct == len(distractor_needles) else "FAIL"
-
-    needle_count = f"{needle_correct}/{len(real_needles)}"
-    distractor_count = f"{distractor_correct}/{len(distractor_needles)}"
-
-    needle_pct = f"{100*needle_correct/len(real_needles):.0f}%" if real_needles else "N/A"
-    distractor_pct = f"{100*distractor_correct/len(distractor_needles):.0f}%" if distractor_needles else "N/A"
-
-    needle_line = f"  {needle_label}{' ' * (max_label - len(needle_label) + 1)}{needle_count} ({needle_pct}) {needle_status}"
-    distractor_line = f"  {distractor_label}{' ' * (max_label - len(distractor_label) + 1)}{distractor_count} ({distractor_pct}) {distractor_status}"
-
-    print(f"  Model: {debug.model_name}")
-    print(needle_line)
-    print(distractor_line)
-
     if verbosity in ("full", "debug"):
-        print()
-        show_all = True
-        show_failed = True
         real_needles_sorted = sorted(real_needles, key=lambda x: x[0].index)
         distractor_needles_sorted = sorted(distractor_needles, key=lambda x: x[0].key)
 
