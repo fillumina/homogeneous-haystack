@@ -244,6 +244,7 @@ class TestQueryModel:
             max_tokens=max_tokens,
             timeout=10,
             seed=42,
+            stop_on_error=False,
             repeat=1,
             output_filename="results.csv",
             verbosity="medium",

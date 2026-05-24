@@ -74,6 +74,7 @@ class TestPrintSummary:
             max_tokens=240000,
             timeout=7200,
             seed=42,
+            stop_on_error=False,
             repeat=1,
             output_filename="results.csv",
             verbosity="medium",
@@ -156,7 +157,7 @@ class TestPrintSummary:
             "error": "Connection refused", "truncated": False,
             "model_name": "error", "tokens_per_sec": 0, "avg_latency_ms": 0,
         }]
-        result.timed_out_runs = [1]
+        result.failed_runs = [1]
         start = datetime.datetime.now()
 
         _print_summary(config=config, result=result, summaries=[self._make_summary()], start_time=start, model_name="test-model")
@@ -165,7 +166,7 @@ class TestPrintSummary:
         assert "ERROR" in captured.out
         assert "Connection refused" in captured.out
         assert "Issues" in captured.out
-        assert "Timed out runs" in captured.out
+        assert "Failed runs" in captured.out
 
     def test_prints_truncated_runs(self, capsys):
         config = self._make_config()

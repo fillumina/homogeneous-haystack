@@ -164,6 +164,7 @@ class TestValidation:
             distractors_num=0,
             temperature=0.0, max_tokens=240000, timeout=7200,
             output_filename="results.csv", verbosity="medium", repeat=1, seed=42,
+            stop_on_error=False,
         )
         for k, v in overrides.items():
             setattr(config, k, v)
@@ -179,6 +180,7 @@ class TestValidation:
             distractors_num=0,
             temperature=0.0, max_tokens=240000, timeout=7200,
             output_filename="results.csv", verbosity="medium", repeat=1, seed=42,
+            stop_on_error=False,
         )
         _validate_params(config)
 
@@ -191,6 +193,7 @@ class TestValidation:
             distractors_num=0,
             temperature=0.0, max_tokens=240000, timeout=7200,
             output_filename="results.csv", verbosity="medium", repeat=1, seed=42,
+            stop_on_error=False,
         )
         _validate_params(config)
 

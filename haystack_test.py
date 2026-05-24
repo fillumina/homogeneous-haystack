@@ -168,6 +168,7 @@ class Config:
     max_tokens: int
     timeout: int
     repeat: int
+    stop_on_error: bool
     seed: int
     fuzz: float = 0.49
     timestamp: str = ""
@@ -203,6 +204,7 @@ class GlobalResult:
     all_stats: list[RunStats] = field(default_factory=list)
     timed_out_runs: list[int] = field(default_factory=list)
     truncated_runs: list[int] = field(default_factory=list)
+    failed_runs: list[int] = field(default_factory=list)
 
     def add_model_result(self, run_idx:int, model_result: ModelResult) -> GlobalResultType:
         self.all_rows.extend(model_result.rows)
@@ -582,6 +584,12 @@ def query_llama(
     except urllib.error.URLError as e:
         latency_ms = (time.monotonic() - start) * 1000
         raise HaystackQueryError(f"Connection failed: {e.reason}") from e
+    except (ConnectionResetError, BrokenPipeError) as e:
+        latency_ms = (time.monotonic() - start) * 1000
+        raise HaystackQueryError(f"Connection reset: {e}") from e
+    except OSError as e:
+        latency_ms = (time.monotonic() - start) * 1000
+        raise HaystackQueryError(f"Connection failed: {e}") from e
 
 
 class HaystackQueryError(Exception):
@@ -1260,6 +1268,8 @@ def _parse_arguments() -> argparse.Namespace :
                         help="Output verbosity level one of 'minimal', 'medium', 'full', 'debug' (default: medium)")
     parser.add_argument("--repeat", type=int, default=1,
                         help="Number of independent runs (default: 1)")
+    parser.add_argument("--stop-on-error", action="store_true",
+                        help="Stop after the first query error (instead of continuing through all repeats)")
     parser.add_argument("--seed", type=int, default=None,
                         help="Base random seed (random if omitted)")
     parser.add_argument("--fuzz", type=float, default=0.49,
@@ -1303,6 +1313,7 @@ def _create_configuration() -> Config:
         max_tokens=args.max_tokens,
         timeout=args.timeout,
         repeat=args.repeat,
+        stop_on_error=args.stop_on_error,
         seed=actual_seed,
         fuzz=args.fuzz,
         timestamp=datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
@@ -1392,14 +1403,15 @@ def main() -> None:
                     print(f"model={model_result.model_name}, NO RESULTS")
 
         except HaystackQueryError as e:
-            global_result.timed_out_runs.append(run_idx + 1)
+            global_result.failed_runs.append(run_idx + 1)
             print()
             print("=" * 60)
             print(f"QUERY ERROR: Run {run_idx + 1} — {e}")
             print("=" * 60)
             print()
-        except Exception as e:
-            print(f"FAILED: {e}", file=sys.stderr)
+            if config.stop_on_error:
+                print("Stopping early due to --stop-on-error")
+                break
 
     summaries = compute_experiment_summary(config, global_result)
     model_name = global_result.all_stats[0].get("model_name", "unknown") if global_result.all_stats else "unknown"
@@ -1438,7 +1450,10 @@ def _print_summary(
         # Configuration
         print("\nConfiguration:")
         print(f"  Timestamp:       {config.timestamp}")
-        print(f"  Model:           {model_name}")
+        if model_name == "unknown":
+            print(f"  Model:           <no successful runs>")
+        else:
+            print(f"  Model:           {model_name}")
         print(f"  Haystack size:   {config.haystack_num}")
         print(f"  Num needles:     {config.needles_num + config.distractors_num} ({config.needles_num} real + {config.distractors_num} distractors)")
         distractor_pct = config.distractors_num / (config.needles_num + config.distractors_num)
@@ -1499,10 +1514,12 @@ def _print_summary(
             print(f"  Avg tokens/sec:      {total_completion_all/(total_latency_all/1000):.1f}")
 
     # Issues
-    if result.timed_out_runs or result.truncated_runs:
+    if result.failed_runs or result.truncated_runs:
         print("\nIssues:")
-        if result.timed_out_runs:
-            print(f"  Timed out runs:    {result.timed_out_runs}")
+        if result.failed_runs:
+            print(f"  Failed runs:       {result.failed_runs}")
+            if result.failed_runs and not summaries:
+                print("  (no successful runs — all query attempts failed)")
         if result.truncated_runs:
             print(f"  Truncated runs:    {result.truncated_runs}")
             print("  (completion_tokens reached max_tokens — model was cut off)")
