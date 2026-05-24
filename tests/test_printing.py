@@ -2,6 +2,7 @@ import datetime
 
 from haystack_test import (
     Config,
+    ExperimentSummary,
     GlobalResult,
     ResultRow,
     _print_message,
@@ -55,7 +56,6 @@ class TestPrintSummary:
     def _make_config(self):
         return Config(
             endpoint="http://localhost:8080/v1/chat/completions",
-            model=None,
             k_quant="Q4_0",
             v_quant="Q8_0",
             note="test",
@@ -73,6 +73,7 @@ class TestPrintSummary:
             repeat=1,
             output_filename="results.csv",
             show="all",
+            timestamp="2024-01-01T10:00:00",
         )
 
     def _make_rows(self):
@@ -90,6 +91,25 @@ class TestPrintSummary:
                 latency_ms=100.0,
             ),
         ]
+
+    def _make_summary(self, model_name="test-model", needle_success=50.0,
+                      distractor_success=50.0, truncated=False, error=None,
+                      tokens_per_sec=500.0, avg_latency_ms=20.0, total_tokens=150,
+                      total_latency_ms=200.0, total_completion=100):
+        return ExperimentSummary(
+            prompt_tokens=100,
+            completion_tokens=50,
+            total_tokens=total_tokens,
+            total_pairs=100,
+            needles_num=2,
+            distractors_num=2,
+            needle_success_pct=needle_success,
+            distractor_success_pct=distractor_success,
+            tokens_per_sec=tokens_per_sec,
+            total_time_sec=0.2,
+            ctx_pos_buckets=[0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+            distractor_failures=1,
+        )
 
     def test_prints_full_summary(self, capsys):
         config = self._make_config()
@@ -109,7 +129,7 @@ class TestPrintSummary:
         ]
         start = datetime.datetime(2024, 1, 1, 10, 0, 0)
 
-        _print_summary(config=config, result=result, summaries=[], start_time=start)
+        _print_summary(config=config, result=result, summaries=[self._make_summary()], start_time=start, model_name="test-model")
 
         captured = capsys.readouterr()
         assert "SUMMARY" in captured.out
@@ -135,7 +155,7 @@ class TestPrintSummary:
         result.timed_out_runs = [1]
         start = datetime.datetime.now()
 
-        _print_summary(config=config, result=result, summaries=[], start_time=start)
+        _print_summary(config=config, result=result, summaries=[self._make_summary()], start_time=start, model_name="test-model")
 
         captured = capsys.readouterr()
         assert "ERROR" in captured.out
@@ -155,7 +175,7 @@ class TestPrintSummary:
         result.truncated_runs = [1]
         start = datetime.datetime.now()
 
-        _print_summary(config=config, result=result, summaries=[], start_time=start)
+        _print_summary(config=config, result=result, summaries=[self._make_summary()], start_time=start, model_name="test-model")
 
         captured = capsys.readouterr()
         assert "TRUNCATED" in captured.out
@@ -172,7 +192,7 @@ class TestPrintSummary:
         }]
         start = datetime.datetime.now()
 
-        _print_summary(config=config, result=result, summaries=[], start_time=start)
+        _print_summary(config=config, result=result, summaries=[self._make_summary()], start_time=start, model_name="test-model")
 
         captured = capsys.readouterr()
         assert "min" in captured.out
@@ -213,7 +233,7 @@ class TestPrintSummary:
         }]
         start = datetime.datetime.now()
 
-        _print_summary(config=config, result=result, summaries=[], start_time=start)
+        _print_summary(config=config, result=result, summaries=[self._make_summary()], start_time=start, model_name="test-model")
 
         captured = capsys.readouterr()
         assert "Needle accuracy" in captured.out
@@ -239,7 +259,7 @@ class TestPrintSummary:
         }]
         start = datetime.datetime.now()
 
-        _print_summary(config=config, result=result, summaries=[], start_time=start)
+        _print_summary(config=config, result=result, summaries=[self._make_summary()], start_time=start, model_name="test-model")
 
         captured = capsys.readouterr()
         assert "Needle accuracy" in captured.out

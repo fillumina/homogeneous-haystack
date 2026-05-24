@@ -16,7 +16,6 @@ class TestRunSingleExperiment:
     def _make_config(self, max_tokens=240000, fuzz=0.49):
         return Config(
             endpoint="http://localhost:8080/v1/chat/completions",
-            model=None,
             k_quant="Q4_0",
             v_quant="Q8_0",
             note="test",
@@ -35,6 +34,7 @@ class TestRunSingleExperiment:
             output_filename="results.csv",
             show="all",
             fuzz=fuzz,
+            timestamp="2024-01-01T10:00:00",
         )
 
     def _make_mock_response(self, content="KEY1 = 12345", **usage_kwargs):
@@ -243,7 +243,6 @@ class TestComputeExperimentSummary:
     def _make_config(self):
         return Config(
             endpoint="http://localhost:8080/v1/chat/completions",
-            model=None,
             k_quant="Q4_0",
             v_quant="Q8_0",
             note="test note",
@@ -262,6 +261,7 @@ class TestComputeExperimentSummary:
             output_filename="results.csv",
             show="all",
             fuzz=0,
+            timestamp="2024-01-01T10:00:00",
         )
 
     def _make_result_row(self, run, depth, correct, expected, is_distractor=False):
@@ -312,11 +312,11 @@ class TestComputeExperimentSummary:
         summaries = compute_experiment_summary(config, global_result)
         assert len(summaries) == 1
         s = summaries[0]
-        assert s.model_name == "test-model"
+        assert global_result.all_stats[0].get("model_name") == "test-model"
         assert s.needle_success_pct == 100.0
         assert s.distractor_success_pct == 0.0
-        assert s.total_real_needles == 3
-        assert s.total_needles == 3
+        assert s.needles_num == 3
+        assert s.distractors_num == 0
         assert s.distractor_failures == 0
         # All buckets should be 0 since all needles are correct
         assert all(b == 0 for b in s.ctx_pos_buckets)
@@ -345,7 +345,7 @@ class TestComputeExperimentSummary:
         assert len(summaries) == 1
         s = summaries[0]
         assert s.needle_success_pct == 50.0
-        assert s.total_real_needles == 4
+        assert s.needles_num == 4
         assert s.ctx_pos_buckets[0] == 0  # 0-10: 0 failures
         assert s.ctx_pos_buckets[1] == 1  # 10-20: 1 failure
         assert s.ctx_pos_buckets[2] == 1  # 20-30: 1 failure
@@ -375,9 +375,9 @@ class TestComputeExperimentSummary:
         s = summaries[0]
         assert s.needle_success_pct == 100.0
         assert s.distractor_success_pct == 50.0
-        assert s.total_distractors == 2
+        assert s.distractors_num == 2
         assert s.distractor_failures == 1
-        assert s.total_needles == 3
+        assert s.needles_num == 1
 
     def test_k_quant_v_quant(self):
         config = self._make_config()
@@ -407,8 +407,8 @@ class TestComputeExperimentSummary:
             'tokens_per_sec': 100.0,
         }]
         summaries = compute_experiment_summary(config, global_result)
-        assert summaries[0].k_quant == "turbo4"
-        assert summaries[0].v_quant == "Q6_K"
+        assert config.k_quant == "turbo4"
+        assert config.v_quant == "Q6_K"
 
     def test_note(self):
         config = self._make_config()
@@ -432,7 +432,7 @@ class TestComputeExperimentSummary:
             'truncated_runs': [],
         })()
         summaries = compute_experiment_summary(config, global_result)
-        assert summaries[0].note == "my custom note"
+        assert config.note == "my custom note"
 
     def test_timestamp_format(self):
         config = self._make_config()
@@ -457,7 +457,7 @@ class TestComputeExperimentSummary:
         summaries = compute_experiment_summary(config, global_result)
         # Should be ISO-like format: YYYY-MM-DDTHH:MM:SS
         import re
-        assert re.match(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', summaries[0].timestamp)
+        assert re.match(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', config.timestamp)
 
     def test_multiple_runs(self):
         config = self._make_config()
@@ -488,7 +488,5 @@ class TestComputeExperimentSummary:
         })()
         summaries = compute_experiment_summary(config, global_result)
         assert len(summaries) == 2
-        assert summaries[0].model_name == "model-a"
-        assert summaries[1].model_name == "model-b"
         assert summaries[0].needle_success_pct == 100.0
         assert summaries[1].needle_success_pct == 0.0

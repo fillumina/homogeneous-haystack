@@ -45,15 +45,13 @@ SUMMARY_CSV_COLUMNS: list[str] = [
     "prompt_tokens",
     "completion_tokens",
     "total_tokens",
-    "latency_ms",
     "total_pairs",
-    "total_needles",
-    "total_distractors",
+    "needles_num",
+    "distractors_num",
     "needle_success_pct",
     "distractor_success_pct",
     "tokens_per_sec",
     "total_time_sec",
-    "total_real_needles",
     "ctx-pos-0",
     "ctx-pos-10",
     "ctx-pos-20",
@@ -150,7 +148,6 @@ class Config:
     endpoint: str
     output_filename: str
     show: str
-    model: str | None
     k_quant: str
     v_quant: str
     note: str
@@ -167,6 +164,7 @@ class Config:
     full: bool
     seed: int
     fuzz: float = 0.49
+    timestamp: str = ""
 
 
 @dataclass
@@ -221,25 +219,18 @@ class Summary:
 
 @dataclass
 class ExperimentSummary:
-    timestamp: str
-    model_name: str
-    k_quant: str
-    v_quant: str
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
-    latency_ms: float
     total_pairs: int
-    total_needles: int
-    total_distractors: int
+    needles_num: int
+    distractors_num: int
     needle_success_pct: float
     distractor_success_pct: float
     tokens_per_sec: float
     total_time_sec: float
-    total_real_needles: int
     ctx_pos_buckets: list[int]
     distractor_failures: int
-    note: str
 
 
 @dataclass
@@ -700,7 +691,6 @@ def query_model(
     raw_response, latency_ms = query_llama(
         config.endpoint,
         messages,
-        model=config.model,
         temperature=config.temperature,
         max_tokens=config.max_tokens,
         timeout=config.timeout,
@@ -955,7 +945,6 @@ def compute_experiment_summary(
             continue
 
         stats = global_result.all_stats[run_idx]
-        model_name = stats.get("model_name") or "unknown"
         total_tokens = stats.get("total_tokens") or 0
         total_latency_ms = stats.get("total_latency_ms") or 0
         total_completion = stats.get("total_completion") or 0
@@ -1008,29 +997,19 @@ def compute_experiment_summary(
                     bucket_idx = 9
                 buckets[bucket_idx] += 1
 
-        # Build timestamp
-        timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-
         summaries.append(ExperimentSummary(
-            timestamp=timestamp,
-            model_name=model_name,
-            k_quant=config.k_quant,
-            v_quant=config.v_quant,
             prompt_tokens=total_prompt,
             completion_tokens=total_completion_api,
             total_tokens=total_tokens,
-            latency_ms=total_latency_ms,
             total_pairs=total_pairs,
-            total_needles=needle_total + distractor_total,
-            total_distractors=distractor_total,
+            needles_num=needle_total,
+            distractors_num=distractor_total,
             needle_success_pct=round(needle_success_pct, 2),
             distractor_success_pct=round(distractor_success_pct, 2),
             tokens_per_sec=round(tokens_per_sec, 1) if tokens_per_sec else 0.0,
             total_time_sec=round(total_time_sec, 3),
-            total_real_needles=needle_total,
             ctx_pos_buckets=buckets,
             distractor_failures=distractor_failures,
-            note=config.note,
         ))
 
     return summaries
@@ -1041,7 +1020,7 @@ def compute_experiment_summary(
 # ---------------------------------------------------------------------------
 
 
-def _write_summary_csv(filepath: str, summaries: list[ExperimentSummary]) -> None:
+def _write_summary_csv(config: Config, model_name: str, summaries: list[ExperimentSummary]) -> None:
     """Write experiment summaries to CSV in append mode.
 
     Opens the file in append mode. Writes the header row only if the
@@ -1050,31 +1029,29 @@ def _write_summary_csv(filepath: str, summaries: list[ExperimentSummary]) -> Non
     import os as _os
 
     write_header = False
-    if not _os.path.exists(filepath) or _os.path.getsize(filepath) == 0:
+    if not _os.path.exists(config.output_filename) or _os.path.getsize(config.output_filename) == 0:
         write_header = True
 
-    with open(filepath, "a", newline="") as f:
+    with open(config.output_filename, "a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=SUMMARY_CSV_COLUMNS)
         if write_header:
             writer.writeheader()
         for summary in summaries:
             row = {
-                "timestamp": summary.timestamp,
-                "model_name": summary.model_name,
-                "k_quant": summary.k_quant,
-                "v_quant": summary.v_quant,
+                "timestamp": config.timestamp,
+                "model_name": model_name,
+                "k_quant": config.k_quant,
+                "v_quant": config.v_quant,
                 "prompt_tokens": summary.prompt_tokens,
                 "completion_tokens": summary.completion_tokens,
                 "total_tokens": summary.total_tokens,
-                "latency_ms": summary.latency_ms,
                 "total_pairs": summary.total_pairs,
-                "total_needles": summary.total_needles,
-                "total_distractors": summary.total_distractors,
-                "needle_success_pct": summary.needle_success_pct,
-                "distractor_success_pct": summary.distractor_success_pct,
+                "needles_num": summary.needles_num,
+                "distractors_num": summary.distractors_num,
+                "needle_success_pct": f"{summary.needle_success_pct:.2f}",
+                "distractor_success_pct": f"{summary.distractor_success_pct:.2f}",
                 "tokens_per_sec": summary.tokens_per_sec,
                 "total_time_sec": summary.total_time_sec,
-                "total_real_needles": summary.total_real_needles,
                 "ctx-pos-0": summary.ctx_pos_buckets[0],
                 "ctx-pos-10": summary.ctx_pos_buckets[1],
                 "ctx-pos-20": summary.ctx_pos_buckets[2],
@@ -1086,7 +1063,7 @@ def _write_summary_csv(filepath: str, summaries: list[ExperimentSummary]) -> Non
                 "ctx-pos-80": summary.ctx_pos_buckets[8],
                 "ctx-pos-90": summary.ctx_pos_buckets[9],
                 "distractor_failures": summary.distractor_failures,
-                "note": summary.note,
+                "note": config.note,
             }
             writer.writerow(row)
 
@@ -1104,8 +1081,6 @@ def _parse_arguments() -> argparse.Namespace :
     parser.add_argument("--endpoint",
                         default="http://localhost:8080/v1/chat/completions",
                         help="llama-server endpoint (default: http://localhost:8080/v1/chat/completions)")
-    parser.add_argument("--model", default=None,
-                        help="Model name (auto-detected from API if omitted)")
     parser.add_argument("--key-len", type=int, default=8, choices=range(5, 13),
                         help="Key string length, 5-12 (default: 8)")
     parser.add_argument("--val-min", type=int, default=10000,
@@ -1163,7 +1138,6 @@ def _create_configuration() -> Config:
         endpoint=args.endpoint,
         output_filename=args.output,
         show=actual_show,
-        model=args.model,
         k_quant=args.k_quant,
         v_quant=args.v_quant,
         note=args.note,
@@ -1180,6 +1154,7 @@ def _create_configuration() -> Config:
         full=args.full,
         seed=actual_seed,
         fuzz=args.fuzz,
+        timestamp=datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
     )
 
     _validate_params(config)
@@ -1239,13 +1214,15 @@ def main() -> None:
             print(f"FAILED: {e}", file=sys.stderr)
 
     summaries = compute_experiment_summary(config, global_result)
-    _write_summary_csv(config.output_filename, summaries)
+    model_name = global_result.all_stats[0].get("model_name", "unknown") if global_result.all_stats else "unknown"
+    _write_summary_csv(config, model_name, summaries)
 
     _print_summary(
         config=config,
         result=global_result,
         summaries=summaries,
         start_time=start_time,
+        model_name=model_name,
     )
 
 
@@ -1253,7 +1230,8 @@ def _print_summary(
     config: Config,
     result: GlobalResult,
     summaries: list[ExperimentSummary],
-    start_time: datetime.datetime
+    start_time: datetime.datetime,
+    model_name: str,
 ) -> None:
     """Print a comprehensive summary of the experiment."""
     print()
@@ -1263,31 +1241,35 @@ def _print_summary(
 
     # Configuration
     print("\nConfiguration:")
-    print(f"  Haystack size:     {config.haystack_num}")
-    print(f"  Num needles:       {config.needles_num + config.distractors_num} ({config.needles_num} real + {config.distractors_num} distractors)")
+    print(f"  Timestamp:       {config.timestamp}")
+    print(f"  Model:           {model_name}")
+    print(f"  Haystack size:   {config.haystack_num}")
+    print(f"  Num needles:     {config.needles_num + config.distractors_num} ({config.needles_num} real + {config.distractors_num} distractors)")
     distractor_pct = config.distractors_num / (config.needles_num + config.distractors_num)
-    print(f"  Distractors:       {config.distractors_num} (exact count) ({distractor_pct * 100:.1f}%)")
-    print(f"  Key length:        {config.key_len}")
-    print(f"  Value range:       {config.val_min} - {config.val_max}")
-    print(f"  Temperature:       {config.temperature}")
-    print(f"  Max tokens:        {config.max_tokens}")
-    print(f"  Timeout:           {config.timeout}s")
-    print(f"  Seed:              {config.seed}")
-    print(f"  Repeat:            {config.repeat}")
-    print(f"  Endpoint:          {config.endpoint}")
+    print(f"  Distractors:     {config.distractors_num} (exact count) ({distractor_pct * 100:.1f}%)")
+    print(f"  Key length:      {config.key_len}")
+    print(f"  Value range:     {config.val_min} - {config.val_max}")
+    print(f"  Temperature:     {config.temperature}")
+    print(f"  Max tokens:      {config.max_tokens}")
+    print(f"  Timeout:         {config.timeout}s")
+    print(f"  Seed:            {config.seed}")
+    print(f"  Repeat:          {config.repeat}")
+    print(f"  Endpoint:        {config.endpoint}")
     if config.k_quant:
-        print(f"  K quant:           {config.k_quant}")
+        print(f"  K quant:         {config.k_quant}")
     if config.v_quant:
-        print(f"  V quant:           {config.v_quant}")
+        print(f"  V quant:         {config.v_quant}")
+    if config.note:
+        print(f"  Note:            {config.note}")
 
-    # Per-run results
-    if result.all_stats:
+    # Per-run results (merged: combines run-level stats with experiment summary details)
+    if summaries:
         print("\nPer-run results:")
         run_rows = {}
         for r in result.all_rows:
             run_rows.setdefault(r.run, []).append(r)
-        for i, stats in enumerate(result.all_stats):
-            model_name = stats.get("model_name", "N/A") or "N/A"
+        for i, s in enumerate(summaries):
+            stats = result.all_stats[i] if i < len(result.all_stats) else {}
             total_tokens = stats.get("total_tokens", 0) or 0
             avg_lat = stats.get("avg_latency_ms", 0) or 0
             tps = stats.get("tokens_per_sec", 0)
@@ -1300,7 +1282,6 @@ def _print_summary(
             distractor_correct = sum(1 for r in distractor_rows if r.correct == 1)
 
             print(f"  Run:       {i + 1}")
-            print(f"  Model:     {model_name}")
             if error:
                 print(f"  Status:    ERROR ({error})")
             elif truncated:
@@ -1316,27 +1297,10 @@ def _print_summary(
                           f"({100*distractor_correct/len(distractor_rows):.1f}%)")
                 else:
                     print(f"  Distractor accuracy: N/A (no distractors)")
-                print(f"  Tokens:    {total_tokens}")
-                print(f"  Avg Lat:   {avg_lat:.0f}ms")
-                if tps:
-                    print(f"  TPS:       {tps:.1f}")
-            print()
-
-    # Experiment summaries
-    if summaries:
-        print("\nExperiment summaries:")
-        for s in summaries:
-            print(f"  Model:        {s.model_name}")
-            print(f"  Timestamp:    {s.timestamp}")
-            if config.k_quant:
-                print(f"  K quant:      {s.k_quant}")
-            if config.v_quant:
-                print(f"  V quant:      {s.v_quant}")
-            print(f"  Needle succ:  {s.needle_success_pct:.1f}% ({s.total_real_needles} needles)")
-            if s.total_distractors > 0:
-                print(f"  Distr succ:   {s.distractor_success_pct:.1f}% ({s.distractor_failures} failures)")
-            print(f"  TPS:          {s.tokens_per_sec:.1f}")
-            print(f"  Time:         {s.total_time_sec:.1f}s ({s.latency_ms:.0f}ms)")
+                print(f"  Tokens:        {total_tokens}")
+                print(f"  Avg Lat:       {avg_lat:.0f}ms")
+                print(f"  TPS:           {tps:.1f}")
+                print(f"  Time:          {s.total_time_sec:.1f}s")
 
             # Print failure buckets in a 2-row table
             labels = ["0-10%", "10-20%", "20-30%", "30-40%", "40-50%",
@@ -1348,8 +1312,6 @@ def _print_summary(
             print("    " + " ".join(_pad_right(l, col_width) for l in labels))
             print("    " + " ".join(_pad_right(b, col_width) for b in s.ctx_pos_buckets))
 
-            if s.note:
-                print(f"  Note:         {s.note}")
             print()
 
     # Overall results

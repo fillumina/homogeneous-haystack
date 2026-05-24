@@ -158,7 +158,7 @@ class TestValidation:
     def test_invalid_params_raise(self, overrides, expected_msg):
         config = Config(
             endpoint="http://localhost:8080/v1/chat/completions",
-            model=None, k_quant="Q4_0", v_quant="Q8_0", note="test",
+            k_quant="Q4_0", v_quant="Q8_0", note="test",
             key_len=8, val_min=10000, val_max=99999,
             haystack_num=100, needles_num=50,
             distractors_num=0,
@@ -173,7 +173,7 @@ class TestValidation:
     def test_valid_no_distractors(self):
         config = Config(
             endpoint="http://localhost:8080/v1/chat/completions",
-            model=None, k_quant="Q4_0", v_quant="Q8_0", note="test",
+            k_quant="Q4_0", v_quant="Q8_0", note="test",
             key_len=8, val_min=10000, val_max=99999,
             haystack_num=100, needles_num=50,
             distractors_num=0,
@@ -185,10 +185,10 @@ class TestValidation:
     def test_valid_num_only(self):
         config = Config(
             endpoint="http://localhost:8080/v1/chat/completions",
-            model=None, k_quant="Q4_0", v_quant="Q8_0", note="test",
+            k_quant="Q4_0", v_quant="Q8_0", note="test",
             key_len=8, val_min=10000, val_max=99999,
             haystack_num=100, needles_num=50,
-            distractors_num=10,
+            distractors_num=0,
             temperature=0.0, max_tokens=240000, timeout=7200, full=False,
             output_filename="results.csv", show="all", repeat=1, seed=42,
         )
