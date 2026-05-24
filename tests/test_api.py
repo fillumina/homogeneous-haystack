@@ -232,6 +232,9 @@ class TestQueryModel:
         return Config(
             endpoint="http://localhost:8080/v1/chat/completions",
             model=None,
+            k_quant="Q4_0",
+            v_quant="Q8_0",
+            note="test",
             key_len=8,
             val_min=10000,
             val_max=99999,
