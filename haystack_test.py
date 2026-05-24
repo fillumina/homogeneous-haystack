@@ -781,83 +781,6 @@ def _build_rows(
     return rows
 
 
-def _print_needle_results(
-    run_index: int,
-    needles: list[Needle],
-    pairs: list[HaystackPair],
-    parsed: dict[str, str],
-    *,
-    verbosity: str,
-    debug: DebugContext,
-) -> None:
-    """Print run header and needle/distractor results.
-
-    Args:
-        run_index: The experiment run number.
-        needles: List of needles that were queried.
-        pairs: Full list of haystack pairs.
-        parsed: Parsed key -> value results from the model.
-        verbosity: Current verbosity level.
-        debug: Context containing model name.
-    """
-    scored = list(score_needles(needles, parsed))
-    real_needles = []
-    distractor_needles = []
-    for needle, score in zip(needles, scored):
-        if needle.is_distractor:
-            distractor_needles.append((needle, score))
-        else:
-            real_needles.append((needle, score))
-
-    show_all = verbosity in ("full", "debug")
-    show_failed = verbosity in ("medium", "full", "debug")
-
-    print()
-    print("=" * 60)
-    print(f"Run {run_index} — model={debug.model_name}")
-    print("=" * 60)
-
-    print("\n--- Parsed Results ---")
-    if show_all:
-        for needle, score in sorted(real_needles, key=lambda x: x[0].index):
-            depth = round(
-                needle.index / (len(pairs) - 1) * 100, 1
-            ) if len(pairs) > 1 else 0.0
-            status = "OK" if score.correct else "FAIL"
-            print(f"  [{status}] {needle.key} (depth {depth}%) "
-                  f"expected={score.expected!r} actual={score.actual!r}")
-    else:
-        failed = [(n, s) for n, s in sorted(real_needles, key=lambda x: x[0].index) if not s.correct]
-        if failed:
-            for needle, score in failed:
-                depth = round(
-                    needle.index / (len(pairs) - 1) * 100, 1
-                ) if len(pairs) > 1 else 0.0
-                print(f"  [FAIL] {needle.key} (depth {depth}%) "
-                      f"expected={score.expected!r} actual={score.actual!r}")
-        else:
-            print("  All needles correct.")
-
-    if distractor_needles:
-        print(f"\n  --- Distractors ({len(distractor_needles)}) ---")
-        if show_all:
-            for needle, score in sorted(distractor_needles, key=lambda x: x[0].key):
-                status = "OK" if score.correct else "FAIL"
-                print(f"  [{status}] {needle.key} "
-                      f"(distractor, expected=not_found actual={score.actual!r})")
-        else:
-            failed = [(n, s) for n, s in sorted(distractor_needles, key=lambda x: x[0].key) if not s.correct]
-            if failed:
-                for needle, score in failed:
-                    print(f"  [FAIL] {needle.key} "
-                          f"(distractor, expected=not_found actual={score.actual!r})")
-            else:
-                print("  All distractors correct.")
-
-    print("=" * 60)
-    print()
-
-
 def _print_debug_context(debug: DebugContext) -> None:
     """Print debug output: messages and raw response.
 
@@ -1160,7 +1083,79 @@ def _print_run_detail(
         print("    " + " ".join(_pad_right(l, col_width) for l in labels))
         print("    " + " ".join(_pad_right(b, col_width) for b in summary.ctx_pos_buckets))
 
-    print()
+
+def _print_needle_results(
+    run_index: int,
+    needles: list[Needle],
+    pairs: list[HaystackPair],
+    parsed: dict[str, str],
+    *,
+    verbosity: str,
+    debug: DebugContext,
+) -> None:
+    """Print compact needle/distractor summary with optional per-needle detail.
+
+    Args:
+        run_index: The experiment run number.
+        needles: List of needles that were queried.
+        pairs: Full list of haystack pairs.
+        parsed: Parsed key -> value results from the model.
+        verbosity: Current verbosity level.
+        debug: Context containing model name.
+    """
+    scored = list(score_needles(needles, parsed))
+    real_needles = []
+    distractor_needles = []
+    for needle, score in zip(needles, scored):
+        if needle.is_distractor:
+            distractor_needles.append((needle, score))
+        else:
+            real_needles.append((needle, score))
+
+    needle_correct = sum(1 for _, s in real_needles if s.correct)
+    distractor_correct = sum(1 for _, s in distractor_needles if s.correct)
+
+    needle_label = "Needles accuracy:"
+    distractor_label = "Distractors accuracy:"
+    max_label = max(len(needle_label), len(distractor_label))
+
+    needle_status = "OK" if needle_correct == len(real_needles) else "FAIL"
+    distractor_status = "OK" if distractor_correct == len(distractor_needles) else "FAIL"
+
+    needle_count = f"{needle_correct}/{len(real_needles)}"
+    distractor_count = f"{distractor_correct}/{len(distractor_needles)}"
+
+    needle_pct = f"{100*needle_correct/len(real_needles):.0f}%" if real_needles else "N/A"
+    distractor_pct = f"{100*distractor_correct/len(distractor_needles):.0f}%" if distractor_needles else "N/A"
+
+    needle_line = f"  {needle_label}{' ' * (max_label - len(needle_label) + 1)}{needle_count} ({needle_pct}) {needle_status}"
+    distractor_line = f"  {distractor_label}{' ' * (max_label - len(distractor_label) + 1)}{distractor_count} ({distractor_pct}) {distractor_status}"
+
+    print(f"  Model: {debug.model_name}")
+    print(needle_line)
+    print(distractor_line)
+
+    if verbosity in ("full", "debug"):
+        print()
+        show_all = True
+        show_failed = True
+        real_needles_sorted = sorted(real_needles, key=lambda x: x[0].index)
+        distractor_needles_sorted = sorted(distractor_needles, key=lambda x: x[0].key)
+
+        for needle, score in real_needles_sorted:
+            depth = round(
+                needle.index / (len(pairs) - 1) * 100, 1
+            ) if len(pairs) > 1 else 0.0
+            status = "OK" if score.correct else "FAIL"
+            print(f"  [{status}] {needle.key} (depth {depth}%) "
+                  f"expected={score.expected!r} actual={score.actual!r}")
+
+        if distractor_needles_sorted:
+            print()
+            for needle, score in distractor_needles_sorted:
+                status = "OK" if score.correct else "FAIL"
+                print(f"  [{status}] {needle.key} "
+                      f"(distractor, expected=not_found actual={score.actual!r})")
 
 
 def _write_summary_row(config: Config, model_name: str, summary: ExperimentSummary) -> None:

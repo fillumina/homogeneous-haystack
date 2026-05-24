@@ -301,7 +301,7 @@ class TestPrintNeedleResults:
         assert "[FAIL] BBBB" in captured.out
         assert "[FAIL] CCCC" in captured.out
 
-    def test_prints_failed_only_for_medium_verbosity(self, capsys):
+    def test_prints_summary_only_for_medium_verbosity(self, capsys):
         needles = self._make_needles()
         parsed = {"AAAA": "12345", "BBBB": "wrong", "CCCC": "HALLUCINATED"}
         pairs = [("X", 1)] * 100
@@ -313,12 +313,14 @@ class TestPrintNeedleResults:
         )
 
         captured = capsys.readouterr()
+        assert "Model: test-model" in captured.out
+        assert "Needles accuracy:" in captured.out
+        assert "Distractors accuracy:" in captured.out
+        assert "FAIL" in captured.out
         assert "AAAA" not in captured.out
-        assert "BBBB" in captured.out
-        assert "CCCC" in captured.out
-        assert "All needles correct" not in captured.out
+        assert "BBBB" not in captured.out
 
-    def test_prints_success_message_when_all_ok(self, capsys):
+    def test_prints_ok_status_when_all_correct(self, capsys):
         needles = self._make_needles()
         parsed = {"AAAA": "12345", "BBBB": "54321"}
         pairs = [("X", 1)] * 100
@@ -330,8 +332,11 @@ class TestPrintNeedleResults:
         )
 
         captured = capsys.readouterr()
-        assert "All needles correct" in captured.out
-        assert "All distractors correct" in captured.out
+        assert "Model: test-model" in captured.out
+        assert "Needles accuracy:" in captured.out
+        assert "Distractors accuracy:" in captured.out
+        assert "OK" in captured.out
+        assert "FAIL" not in captured.out
 
 
 class TestPrintDebugContext:
