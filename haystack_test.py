@@ -1016,6 +1016,114 @@ def compute_experiment_summary(
 
 
 # ---------------------------------------------------------------------------
+# Per-run summary helpers
+# ---------------------------------------------------------------------------
+
+
+def _print_run_detail(
+    run_number: int,
+    summary: ExperimentSummary,
+    stats: RunStats,
+    run_rows: list[ResultRow],
+    timestamp: str | None = None,
+) -> None:
+    """Print the detailed per-run result block (needle/distractor accuracy, tokens, latency, failure buckets).
+
+    Args:
+        run_number: 1-based run number for display.
+        summary: ExperimentSummary for this run.
+        stats: RunStats for this run.
+        run_rows: All ResultRow objects for this run.
+        timestamp: Optional timestamp string for this run. If None, no timestamp line is printed.
+    """
+    needle_rows = [r for r in run_rows if isinstance(r.expected, int)]
+    distractor_rows = [r for r in run_rows if not isinstance(r.expected, int)]
+    needle_correct = sum(1 for r in needle_rows if r.correct == 1)
+    distractor_correct = sum(1 for r in distractor_rows if r.correct == 1)
+
+    total_tokens = stats.get("total_tokens", 0) or 0
+    avg_lat = stats.get("avg_latency_ms", 0) or 0
+    tps = stats.get("tokens_per_sec", 0)
+    error = stats.get("error")
+    truncated = stats.get("truncated")
+
+    if timestamp is not None:
+        print(f"  Timestamp:       {timestamp}")
+    if error:
+        print(f"  Status:          ERROR ({error})")
+    elif truncated:
+        print("  Status:          OUTPUT TRUNCATED")
+    else:
+        if needle_rows:
+            print(f"  Needle accuracy:     {needle_correct}/{len(needle_rows)} "
+                  f"({100*needle_correct/len(needle_rows):.1f}%)")
+        else:
+            print("  Needle accuracy:     N/A")
+        if distractor_rows:
+            print(f"  Distractor accuracy: {distractor_correct}/{len(distractor_rows)} "
+                  f"({100*distractor_correct/len(distractor_rows):.1f}%)")
+        else:
+            print("  Distractor accuracy: N/A (no distractors)")
+        print(f"  Tokens:          {total_tokens}")
+        print(f"  Avg Lat:         {avg_lat:.0f}ms")
+        print(f"  TPS:             {tps:.1f}")
+        print(f"  Time:            {summary.total_time_sec:.1f}s")
+
+    # Print failure buckets in a 2-row table
+    labels = ["0-10%", "10-20%", "20-30%", "30-40%", "40-50%",
+              "50-60%", "60-70%", "70-80%", "80-90%", "90-100%"]
+    max_val = max(summary.ctx_pos_buckets) if summary.ctx_pos_buckets else 0
+    col_width = max(len(l) for l in labels) + 1
+    col_width = max(col_width, len(str(max_val)) + 1)
+    print("  Failures by 10% interval:")
+    print("    " + " ".join(_pad_right(l, col_width) for l in labels))
+    print("    " + " ".join(_pad_right(b, col_width) for b in summary.ctx_pos_buckets))
+
+    print()
+
+
+def _write_summary_row(config: Config, model_name: str, summary: ExperimentSummary) -> None:
+    """Write a single experiment summary row to CSV in append mode.
+
+    Args:
+        config: The experiment configuration.
+        model_name: Name of the model being tested.
+        summary: The experiment summary to write.
+    """
+    with open(config.output_filename, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=SUMMARY_CSV_COLUMNS)
+        row = {
+            "timestamp": config.timestamp,
+            "model_name": model_name,
+            "k_quant": config.k_quant,
+            "v_quant": config.v_quant,
+            "prompt_tokens": summary.prompt_tokens,
+            "completion_tokens": summary.completion_tokens,
+            "total_tokens": summary.total_tokens,
+            "total_pairs": summary.total_pairs,
+            "needles_num": summary.needles_num,
+            "distractors_num": summary.distractors_num,
+            "needle_success_pct": f"{summary.needle_success_pct:.2f}",
+            "distractor_success_pct": f"{summary.distractor_success_pct:.2f}",
+            "tokens_per_sec": summary.tokens_per_sec,
+            "total_time_sec": summary.total_time_sec,
+            "ctx-pos-0": summary.ctx_pos_buckets[0],
+            "ctx-pos-10": summary.ctx_pos_buckets[1],
+            "ctx-pos-20": summary.ctx_pos_buckets[2],
+            "ctx-pos-30": summary.ctx_pos_buckets[3],
+            "ctx-pos-40": summary.ctx_pos_buckets[4],
+            "ctx-pos-50": summary.ctx_pos_buckets[5],
+            "ctx-pos-60": summary.ctx_pos_buckets[6],
+            "ctx-pos-70": summary.ctx_pos_buckets[7],
+            "ctx-pos-80": summary.ctx_pos_buckets[8],
+            "ctx-pos-90": summary.ctx_pos_buckets[9],
+            "distractor_failures": summary.distractor_failures,
+            "note": config.note,
+        }
+        writer.writerow(row)
+
+
+# ---------------------------------------------------------------------------
 # Summary CSV writing
 # ---------------------------------------------------------------------------
 
@@ -1024,7 +1132,8 @@ def _write_summary_csv(config: Config, model_name: str, summaries: list[Experime
     """Write experiment summaries to CSV in append mode.
 
     Opens the file in append mode. Writes the header row only if the
-    file does not exist or is empty.
+    file does not exist or is empty. Delegates row writing to
+    _write_summary_row.
     """
     import os as _os
 
@@ -1037,35 +1146,7 @@ def _write_summary_csv(config: Config, model_name: str, summaries: list[Experime
         if write_header:
             writer.writeheader()
         for summary in summaries:
-            row = {
-                "timestamp": config.timestamp,
-                "model_name": model_name,
-                "k_quant": config.k_quant,
-                "v_quant": config.v_quant,
-                "prompt_tokens": summary.prompt_tokens,
-                "completion_tokens": summary.completion_tokens,
-                "total_tokens": summary.total_tokens,
-                "total_pairs": summary.total_pairs,
-                "needles_num": summary.needles_num,
-                "distractors_num": summary.distractors_num,
-                "needle_success_pct": f"{summary.needle_success_pct:.2f}",
-                "distractor_success_pct": f"{summary.distractor_success_pct:.2f}",
-                "tokens_per_sec": summary.tokens_per_sec,
-                "total_time_sec": summary.total_time_sec,
-                "ctx-pos-0": summary.ctx_pos_buckets[0],
-                "ctx-pos-10": summary.ctx_pos_buckets[1],
-                "ctx-pos-20": summary.ctx_pos_buckets[2],
-                "ctx-pos-30": summary.ctx_pos_buckets[3],
-                "ctx-pos-40": summary.ctx_pos_buckets[4],
-                "ctx-pos-50": summary.ctx_pos_buckets[5],
-                "ctx-pos-60": summary.ctx_pos_buckets[6],
-                "ctx-pos-70": summary.ctx_pos_buckets[7],
-                "ctx-pos-80": summary.ctx_pos_buckets[8],
-                "ctx-pos-90": summary.ctx_pos_buckets[9],
-                "distractor_failures": summary.distractor_failures,
-                "note": config.note,
-            }
-            writer.writerow(row)
+            _write_summary_row(config, model_name, summary)
 
 
 # ---------------------------------------------------------------------------
@@ -1192,15 +1273,23 @@ def main() -> None:
             )
 
             status = global_result.add_model_result(run_idx, model_result)
-            match status:
-                case GlobalResultType.OK:
-                    correct_count = sum(1 for r in model_result.rows if r.correct == 1)
-                    print(f"model={model_result.model_name}, "
-                        f"accuracy={correct_count}/{len(model_result.rows)} "
-                        f"({100*correct_count/len(model_result.rows):.1f}%)")
-                case GlobalResultType.TRUNCATED:
-                    print(f"model={model_result.model_name}, OUTPUT TRUNCATED")
-                case GlobalResultType.NO_RESULTS:
+            summaries = compute_experiment_summary(config, global_result)
+            summary = summaries[-1] if summaries else None
+            stats = global_result.all_stats[run_idx] if global_result.all_stats else {}
+            run_rows_for_this = [r for r in global_result.all_rows if r.run == run_idx]
+
+            if summary is not None and stats:
+                run_timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                # Write row to CSV immediately
+                _write_summary_row(config, model_result.model_name, summary)
+                # Print detailed per-run output
+                if status == GlobalResultType.OK:
+                    print(f"Run {run_idx + 1}:")
+                    _print_run_detail(run_idx + 1, summary, stats, run_rows_for_this, run_timestamp)
+                elif status == GlobalResultType.TRUNCATED:
+                    print(f"Run {run_idx + 1}:")
+                    _print_run_detail(run_idx + 1, summary, stats, run_rows_for_this, run_timestamp)
+                else:
                     print(f"model={model_result.model_name}, NO RESULTS")
 
         except HaystackQueryError as e:
@@ -1265,54 +1354,13 @@ def _print_summary(
     # Per-run results (merged: combines run-level stats with experiment summary details)
     if summaries:
         print("\nPer-run results:")
-        run_rows = {}
+        run_rows_by_run: dict[int, list[ResultRow]] = {}
         for r in result.all_rows:
-            run_rows.setdefault(r.run, []).append(r)
+            run_rows_by_run.setdefault(r.run, []).append(r)
         for i, s in enumerate(summaries):
             stats = result.all_stats[i] if i < len(result.all_stats) else {}
-            total_tokens = stats.get("total_tokens", 0) or 0
-            avg_lat = stats.get("avg_latency_ms", 0) or 0
-            tps = stats.get("tokens_per_sec", 0)
-            error = stats.get("error")
-            truncated = stats.get("truncated")
-            run_rows_for_this = run_rows.get(i, [])
-            needle_rows = [r for r in run_rows_for_this if isinstance(r.expected, int)]
-            distractor_rows = [r for r in run_rows_for_this if not isinstance(r.expected, int)]
-            needle_correct = sum(1 for r in needle_rows if r.correct == 1)
-            distractor_correct = sum(1 for r in distractor_rows if r.correct == 1)
-
-            print(f"  Run:       {i + 1}")
-            if error:
-                print(f"  Status:    ERROR ({error})")
-            elif truncated:
-                print("  Status:    OUTPUT TRUNCATED")
-            else:
-                if needle_rows:
-                    print(f"  Needle accuracy:  {needle_correct}/{len(needle_rows)} "
-                          f"({100*needle_correct/len(needle_rows):.1f}%)")
-                else:
-                    print(f"  Needle accuracy:  N/A")
-                if distractor_rows:
-                    print(f"  Distractor accuracy: {distractor_correct}/{len(distractor_rows)} "
-                          f"({100*distractor_correct/len(distractor_rows):.1f}%)")
-                else:
-                    print(f"  Distractor accuracy: N/A (no distractors)")
-                print(f"  Tokens:        {total_tokens}")
-                print(f"  Avg Lat:       {avg_lat:.0f}ms")
-                print(f"  TPS:           {tps:.1f}")
-                print(f"  Time:          {s.total_time_sec:.1f}s")
-
-            # Print failure buckets in a 2-row table
-            labels = ["0-10%", "10-20%", "20-30%", "30-40%", "40-50%",
-                      "50-60%", "60-70%", "70-80%", "80-90%", "90-100%"]
-            max_val = max(s.ctx_pos_buckets) if s.ctx_pos_buckets else 0
-            col_width = max(len(l) for l in labels) + 1
-            col_width = max(col_width, len(str(max_val)) + 1)
-            print(f"  Failures by 10% interval:")
-            print("    " + " ".join(_pad_right(l, col_width) for l in labels))
-            print("    " + " ".join(_pad_right(b, col_width) for b in s.ctx_pos_buckets))
-
-            print()
+            run_rows_for_this = run_rows_by_run.get(i, [])
+            _print_run_detail(i + 1, s, stats, run_rows_for_this, timestamp=None)
 
     # Overall results
     total = len(result.all_rows)
