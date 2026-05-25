@@ -1093,7 +1093,7 @@ def _print_needle_results(
     verbosity: str,
     debug: DebugContext,
 ) -> None:
-    """Print per-needle detail for full/debug verbosity.
+    """Print per-needle detail: failed only for medium, all for full/debug.
 
     Args:
         run_index: The experiment run number.
@@ -1112,17 +1112,22 @@ def _print_needle_results(
         else:
             real_needles.append((needle, score))
 
-    if verbosity in ("full", "debug"):
+    if verbosity in ("medium", "full", "debug"):
         real_needles_sorted = sorted(real_needles, key=lambda x: x[0].index)
         distractor_needles_sorted = sorted(distractor_needles, key=lambda x: x[0].key)
 
-        for needle, score in real_needles_sorted:
-            depth = round(
-                needle.index / (len(pairs) - 1) * 100, 1
-            ) if len(pairs) > 1 else 0.0
-            status = "OK" if score.correct else "FAIL"
-            print(f"  [{status}] {needle.key} (depth {depth}%) "
-                  f"expected={score.expected!r} actual={score.actual!r}")
+        if verbosity == "medium":
+            real_needles_sorted = [(n, s) for n, s in real_needles_sorted if not s.correct]
+            distractor_needles_sorted = [(n, s) for n, s in distractor_needles_sorted if not s.correct]
+
+        if real_needles_sorted:
+            for needle, score in real_needles_sorted:
+                depth = round(
+                    needle.index / (len(pairs) - 1) * 100, 1
+                ) if len(pairs) > 1 else 0.0
+                status = "OK" if score.correct else "FAIL"
+                print(f"  [{status}] {needle.key} (depth {depth}%) "
+                      f"expected={score.expected!r} actual={score.actual!r}")
 
         if distractor_needles_sorted:
             print()
