@@ -99,7 +99,7 @@ class ApiResponseBody(TypedDict, total=False):
 
 class Payload(TypedDict):
     model: str
-    messages: list[Message]
+    messages: list[dict]
     temperature: float
     max_tokens: int
     stream: bool
@@ -559,7 +559,7 @@ def query_llama(
     """
     payload: Payload = {
         "model": model or "local",
-        "messages": [{"role": getattr(m, "role", m["role"]), "content": getattr(m, "content", m["content"])} for m in messages],
+        "messages": [m._asdict() for m in messages],
         "temperature": temperature,
         "max_tokens": max_tokens,
         "stream": False,
