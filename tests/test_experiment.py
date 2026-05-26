@@ -4,12 +4,23 @@ from unittest.mock import patch
 from haystack_test import (
     Config,
     ExperimentSummary,
+    GlobalResult,
     HaystackQueryError,
     ModelResult,
     ResultRow,
     compute_experiment_summary,
     run_single_experiment,
 )
+
+
+def _make_global_result(all_rows=None, all_stats=None, timed_out_runs=None, truncated_runs=None, failed_runs=None):
+    return GlobalResult(
+        all_rows=all_rows or [],
+        all_stats=all_stats or [],
+        timed_out_runs=timed_out_runs or [],
+        truncated_runs=truncated_runs or [],
+        failed_runs=failed_runs or [],
+    )
 
 
 class TestRunSingleExperiment:
@@ -282,12 +293,7 @@ class TestComputeExperimentSummary:
 
     def test_empty_result(self):
         config = self._make_config()
-        global_result = type('GlobalResult', (), {
-            'all_rows': [],
-            'all_stats': [],
-            'timed_out_runs': [],
-            'truncated_runs': [],
-        })()
+        global_result = _make_global_result()
         summaries = compute_experiment_summary(config, global_result)
         assert summaries == []
 
@@ -298,18 +304,13 @@ class TestComputeExperimentSummary:
             self._make_result_row(0, 50.0, 1, 67890),
             self._make_result_row(0, 90.0, 1, 11111),
         ]
-        global_result = type('GlobalResult', (), {
-            'all_rows': rows,
-            'all_stats': [{
-                'model_name': 'test-model',
-                'total_tokens': 150,
-                'total_latency_ms': 500.0,
-                'total_completion': 50,
-                'tokens_per_sec': 100.0,
-            }],
-            'timed_out_runs': [],
-            'truncated_runs': [],
-        })()
+        global_result = _make_global_result(all_rows=rows, all_stats=[{
+            'model_name': 'test-model',
+            'total_tokens': 150,
+            'total_latency_ms': 500.0,
+            'total_completion': 50,
+            'tokens_per_sec': 100.0,
+        }])
         summaries = compute_experiment_summary(config, global_result)
         assert len(summaries) == 1
         s = summaries[0]
@@ -330,18 +331,13 @@ class TestComputeExperimentSummary:
             self._make_result_row(0, 25.0, 0, 11111),       # fail, 20-30 bucket
             self._make_result_row(0, 95.0, 1, 22222),       # correct, 90-100 bucket
         ]
-        global_result = type('GlobalResult', (), {
-            'all_rows': rows,
-            'all_stats': [{
-                'model_name': 'test-model',
-                'total_tokens': 150,
-                'total_latency_ms': 500.0,
-                'total_completion': 50,
-                'tokens_per_sec': 100.0,
-            }],
-            'timed_out_runs': [],
-            'truncated_runs': [],
-        })()
+        global_result = _make_global_result(all_rows=rows, all_stats=[{
+            'model_name': 'test-model',
+            'total_tokens': 150,
+            'total_latency_ms': 500.0,
+            'total_completion': 50,
+            'tokens_per_sec': 100.0,
+        }])
         summaries = compute_experiment_summary(config, global_result)
         assert len(summaries) == 1
         s = summaries[0]
@@ -359,18 +355,13 @@ class TestComputeExperimentSummary:
             self._make_result_row(0, 50.0, 0, "", True),     # distractor, failed
             self._make_result_row(0, 90.0, 1, "", True),     # distractor, correct (no hallucination)
         ]
-        global_result = type('GlobalResult', (), {
-            'all_rows': rows,
-            'all_stats': [{
-                'model_name': 'test-model',
-                'total_tokens': 150,
-                'total_latency_ms': 500.0,
-                'total_completion': 50,
-                'tokens_per_sec': 100.0,
-            }],
-            'timed_out_runs': [],
-            'truncated_runs': [],
-        })()
+        global_result = _make_global_result(all_rows=rows, all_stats=[{
+            'model_name': 'test-model',
+            'total_tokens': 150,
+            'total_latency_ms': 500.0,
+            'total_completion': 50,
+            'tokens_per_sec': 100.0,
+        }])
         summaries = compute_experiment_summary(config, global_result)
         assert len(summaries) == 1
         s = summaries[0]
@@ -384,12 +375,7 @@ class TestComputeExperimentSummary:
         config = self._make_config()
         config.k_quant = "turbo4"
         config.v_quant = "Q6_K"
-        global_result = type('GlobalResult', (), {
-            'all_rows': [],
-            'all_stats': [],
-            'timed_out_runs': [],
-            'truncated_runs': [],
-        })()
+        global_result = _make_global_result()
         summaries = compute_experiment_summary(config, global_result)
         # summaries will be empty but config fields should be set
         # Test with at least one row
@@ -420,18 +406,13 @@ class TestComputeExperimentSummary:
             expected=12345, actual="12345",
             prompt_tokens=100, completion_tokens=50, total_tokens=150, latency_ms=500.0,
         )]
-        global_result = type('GlobalResult', (), {
-            'all_rows': rows,
-            'all_stats': [{
-                'model_name': 'test-model',
-                'total_tokens': 150,
-                'total_latency_ms': 500.0,
-                'total_completion': 50,
-                'tokens_per_sec': 100.0,
-            }],
-            'timed_out_runs': [],
-            'truncated_runs': [],
-        })()
+        global_result = _make_global_result(all_rows=rows, all_stats=[{
+            'model_name': 'test-model',
+            'total_tokens': 150,
+            'total_latency_ms': 500.0,
+            'total_completion': 50,
+            'tokens_per_sec': 100.0,
+        }])
         summaries = compute_experiment_summary(config, global_result)
         assert config.note == "my custom note"
 
@@ -443,18 +424,13 @@ class TestComputeExperimentSummary:
             expected=12345, actual="12345",
             prompt_tokens=100, completion_tokens=50, total_tokens=150, latency_ms=500.0,
         )]
-        global_result = type('GlobalResult', (), {
-            'all_rows': rows,
-            'all_stats': [{
-                'model_name': 'test-model',
-                'total_tokens': 150,
-                'total_latency_ms': 500.0,
-                'total_completion': 50,
-                'tokens_per_sec': 100.0,
-            }],
-            'timed_out_runs': [],
-            'truncated_runs': [],
-        })()
+        global_result = _make_global_result(all_rows=rows, all_stats=[{
+            'model_name': 'test-model',
+            'total_tokens': 150,
+            'total_latency_ms': 500.0,
+            'total_completion': 50,
+            'tokens_per_sec': 100.0,
+        }])
         summaries = compute_experiment_summary(config, global_result)
         # Should be ISO-like format: YYYY-MM-DDTHH:MM:SS
         import re
@@ -466,27 +442,22 @@ class TestComputeExperimentSummary:
             self._make_result_row(0, 10.0, 1, 12345),
             self._make_result_row(1, 10.0, 0, 67890),
         ]
-        global_result = type('GlobalResult', (), {
-            'all_rows': rows,
-            'all_stats': [
-                {
-                    'model_name': 'model-a',
-                    'total_tokens': 150,
-                    'total_latency_ms': 500.0,
-                    'total_completion': 50,
-                    'tokens_per_sec': 100.0,
-                },
-                {
-                    'model_name': 'model-b',
-                    'total_tokens': 150,
-                    'total_latency_ms': 600.0,
-                    'total_completion': 50,
-                    'tokens_per_sec': 83.3,
-                },
-            ],
-            'timed_out_runs': [],
-            'truncated_runs': [],
-        })()
+        global_result = _make_global_result(all_rows=rows, all_stats=[
+            {
+                'model_name': 'model-a',
+                'total_tokens': 150,
+                'total_latency_ms': 500.0,
+                'total_completion': 50,
+                'tokens_per_sec': 100.0,
+            },
+            {
+                'model_name': 'model-b',
+                'total_tokens': 150,
+                'total_latency_ms': 600.0,
+                'total_completion': 50,
+                'tokens_per_sec': 83.3,
+            },
+        ])
         summaries = compute_experiment_summary(config, global_result)
         assert len(summaries) == 2
         assert summaries[0].needle_success_pct == 100.0
