@@ -384,10 +384,8 @@ def create_distractor_keys(
     Returns:
         List of Needle objects with is_distractor=True and expected=None.
     """
-    # a set that contains all the keys of the haystack
     haystack_keys = set(k for k, _ in pairs)
 
-    # contains the set of distractor keys: keys not in the haystack
     distractor_keys: set[str] = set()
     tries = 0
     while len(distractor_keys) < n_distractor and tries < n_distractor * MAX_DISTRACTOR_KEY_TRIES:
@@ -397,8 +395,6 @@ def create_distractor_keys(
         tries += 1
 
     distractor_needles: list[Needle] = []
-
-    # create the distractors using the remaining indexes of the positions
     idx = starting_index
     for key in distractor_keys:
         distractor_needles.append(Needle(
@@ -407,7 +403,7 @@ def create_distractor_keys(
             expected=None,
             is_distractor=True,
         ))
-        idx = idx + 1
+        idx += 1
 
     return distractor_needles
 
