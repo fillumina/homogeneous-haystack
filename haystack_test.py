@@ -559,7 +559,7 @@ def query_llama(
     """
     payload: Payload = {
         "model": model or "local",
-        "messages": messages,
+        "messages": [{"role": getattr(m, "role", m["role"]), "content": getattr(m, "content", m["content"])} for m in messages],
         "temperature": temperature,
         "max_tokens": max_tokens,
         "stream": False,
