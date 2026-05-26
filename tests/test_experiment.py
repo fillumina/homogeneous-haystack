@@ -2,11 +2,15 @@ import pytest
 from unittest.mock import patch
 
 from haystack_test import (
+    ApiConfig,
     Config,
+    ExecutionConfig,
     ExperimentSummary,
     GlobalResult,
+    HaystackConfig,
     HaystackQueryError,
     ModelResult,
+    OutputConfig,
     ResultRow,
     compute_experiment_summary,
     run_single_experiment,
@@ -26,26 +30,34 @@ def _make_global_result(all_rows=None, all_stats=None, timed_out_runs=None, trun
 class TestRunSingleExperiment:
     def _make_config(self, max_tokens=240000, fuzz=0.49):
         return Config(
-            endpoint="http://localhost:8080/v1/chat/completions",
-            k_quant="Q4_0",
-            v_quant="Q8_0",
-            note="test",
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            haystack_num=10,
-            needles_num=5,
-            distractors_num=0,
-            temperature=0.0,
-            max_tokens=max_tokens,
-            timeout=10,
-            repeat=1,
-            stop_on_error=False,
-            seed=42,
-            output_filename="results.csv",
-            verbosity="medium",
-            fuzz=fuzz,
-            timestamp="2024-01-01T10:00:00",
+            api=ApiConfig(
+                endpoint="http://localhost:8080/v1/chat/completions",
+                temperature=0.0,
+                max_tokens=max_tokens,
+                timeout=10,
+            ),
+            haystack=HaystackConfig(
+                haystack_num=10,
+                needles_num=5,
+                distractors_num=0,
+                key_len=8,
+                val_min=10000,
+                val_max=99999,
+                fuzz=fuzz,
+                seed=42,
+            ),
+            output=OutputConfig(
+                output_filename="results.csv",
+                verbosity="medium",
+                k_quant="Q4_0",
+                v_quant="Q8_0",
+                note="test",
+                timestamp="2024-01-01T10:00:00",
+            ),
+            execution=ExecutionConfig(
+                repeat=1,
+                stop_on_error=False,
+            ),
         )
 
     def _make_mock_response(self, content="KEY1 = 12345", **usage_kwargs):
@@ -253,26 +265,34 @@ class TestRunSingleExperiment:
 class TestComputeExperimentSummary:
     def _make_config(self):
         return Config(
-            endpoint="http://localhost:8080/v1/chat/completions",
-            k_quant="Q4_0",
-            v_quant="Q8_0",
-            note="test note",
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            haystack_num=10,
-            needles_num=5,
-            distractors_num=0,
-            temperature=0.0,
-            max_tokens=240000,
-            timeout=10,
-            repeat=1,
-            stop_on_error=False,
-            seed=42,
-            output_filename="results.csv",
-            verbosity="medium",
-            fuzz=0,
-            timestamp="2024-01-01T10:00:00",
+            api=ApiConfig(
+                endpoint="http://localhost:8080/v1/chat/completions",
+                temperature=0.0,
+                max_tokens=240000,
+                timeout=10,
+            ),
+            haystack=HaystackConfig(
+                haystack_num=10,
+                needles_num=5,
+                distractors_num=0,
+                key_len=8,
+                val_min=10000,
+                val_max=99999,
+                fuzz=0,
+                seed=42,
+            ),
+            output=OutputConfig(
+                output_filename="results.csv",
+                verbosity="medium",
+                k_quant="Q4_0",
+                v_quant="Q8_0",
+                note="test note",
+                timestamp="2024-01-01T10:00:00",
+            ),
+            execution=ExecutionConfig(
+                repeat=1,
+                stop_on_error=False,
+            ),
         )
 
     def _make_result_row(self, run, depth, correct, expected, is_distractor=False):
@@ -373,8 +393,8 @@ class TestComputeExperimentSummary:
 
     def test_k_quant_v_quant(self):
         config = self._make_config()
-        config.k_quant = "turbo4"
-        config.v_quant = "Q6_K"
+        config.output.k_quant = "turbo4"
+        config.output.v_quant = "Q6_K"
         global_result = _make_global_result()
         summaries = compute_experiment_summary(global_result)
         # summaries will be empty but config fields should be set
@@ -394,12 +414,12 @@ class TestComputeExperimentSummary:
             'tokens_per_sec': 100.0,
         }]
         summaries = compute_experiment_summary(global_result)
-        assert config.k_quant == "turbo4"
-        assert config.v_quant == "Q6_K"
+        assert config.output.k_quant == "turbo4"
+        assert config.output.v_quant == "Q6_K"
 
     def test_note(self):
         config = self._make_config()
-        config.note = "my custom note"
+        config.output.note = "my custom note"
         from haystack_test import ResultRow
         rows = [ResultRow(
             run=0, haystack_size=10, depth_pct=10.0, correct=1,
@@ -414,7 +434,7 @@ class TestComputeExperimentSummary:
             'tokens_per_sec': 100.0,
         }])
         summaries = compute_experiment_summary(global_result)
-        assert config.note == "my custom note"
+        assert config.output.note == "my custom note"
 
     def test_timestamp_format(self):
         config = self._make_config()
@@ -434,7 +454,7 @@ class TestComputeExperimentSummary:
         summaries = compute_experiment_summary(global_result)
         # Should be ISO-like format: YYYY-MM-DDTHH:MM:SS
         import re
-        assert re.match(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', config.timestamp)
+        assert re.match(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', config.output.timestamp)
 
     def test_multiple_runs(self):
         config = self._make_config()

@@ -1,8 +1,12 @@
 import pytest
 
 from haystack_test import (
+    ApiConfig,
     Config,
+    ExecutionConfig,
+    HaystackConfig,
     Needle,
+    OutputConfig,
     create_distractor_keys,
     generate_haystack_and_needles,
     pick_needle_positions,
@@ -139,17 +143,17 @@ class TestSelectNeedles:
 
 
 VALIDATION_CASES = [
-    ({"distractors_num": -1}, "distractors_num must be >= 0"),
-    ({"haystack_num": 0}, "haystack_num must be >= 1"),
-    ({"haystack_num": -1}, "haystack_num must be >= 1"),
-    ({"needles_num": 0}, "needles_num must be >= 1"),
-    ({"needles_num": -5}, "needles_num must be >= 1"),
-    ({"key_len": 0}, "key_len must be >= 1"),
-    ({"key_len": -3}, "key_len must be >= 1"),
-    ({"val_min": 99999, "val_max": 10000}, "val_min.*> val_max"),
-    ({"fuzz": -0.1}, "fuzz must be in"),
-    ({"fuzz": 0.5}, "fuzz must be in"),
-    ({"fuzz": 0.9}, "fuzz must be in"),
+    ({"haystack.distractors_num": -1}, "distractors_num must be >= 0"),
+    ({"haystack.haystack_num": 0}, "haystack_num must be >= 1"),
+    ({"haystack.haystack_num": -1}, "haystack_num must be >= 1"),
+    ({"haystack.needles_num": 0}, "needles_num must be >= 1"),
+    ({"haystack.needles_num": -5}, "needles_num must be >= 1"),
+    ({"haystack.key_len": 0}, "key_len must be >= 1"),
+    ({"haystack.key_len": -3}, "key_len must be >= 1"),
+    ({"haystack.val_min": 99999, "haystack.val_max": 10000}, "val_min.*> val_max"),
+    ({"haystack.fuzz": -0.1}, "fuzz must be in"),
+    ({"haystack.fuzz": 0.5}, "fuzz must be in"),
+    ({"haystack.fuzz": 0.9}, "fuzz must be in"),
 ]
 
 
@@ -157,43 +161,98 @@ class TestValidation:
     @pytest.mark.parametrize("overrides, expected_msg", VALIDATION_CASES)
     def test_invalid_params_raise(self, overrides, expected_msg):
         config = Config(
-            endpoint="http://localhost:8080/v1/chat/completions",
-            k_quant="Q4_0", v_quant="Q8_0", note="test",
-            key_len=8, val_min=10000, val_max=99999,
-            haystack_num=100, needles_num=50,
-            distractors_num=0,
-            temperature=0.0, max_tokens=240000, timeout=7200,
-            output_filename="results.csv", verbosity="medium", repeat=1, seed=42,
-            stop_on_error=False,
+            api=ApiConfig(
+                endpoint="http://localhost:8080/v1/chat/completions",
+                temperature=0.0,
+                max_tokens=240000,
+                timeout=7200,
+            ),
+            haystack=HaystackConfig(
+                haystack_num=100,
+                needles_num=50,
+                distractors_num=0,
+                key_len=8,
+                val_min=10000,
+                val_max=99999,
+            ),
+            output=OutputConfig(
+                output_filename="results.csv",
+                verbosity="medium",
+                k_quant="Q4_0",
+                v_quant="Q8_0",
+                note="test",
+            ),
+            execution=ExecutionConfig(
+                repeat=1,
+                stop_on_error=False,
+            ),
         )
         for k, v in overrides.items():
-            setattr(config, k, v)
+            if "." in k:
+                sub, attr = k.split(".", 1)
+                setattr(getattr(config, sub), attr, v)
+            else:
+                setattr(config, k, v)
         with pytest.raises(ValueError, match=expected_msg):
             _validate_params(config)
 
     def test_valid_no_distractors(self):
         config = Config(
-            endpoint="http://localhost:8080/v1/chat/completions",
-            k_quant="Q4_0", v_quant="Q8_0", note="test",
-            key_len=8, val_min=10000, val_max=99999,
-            haystack_num=100, needles_num=50,
-            distractors_num=0,
-            temperature=0.0, max_tokens=240000, timeout=7200,
-            output_filename="results.csv", verbosity="medium", repeat=1, seed=42,
-            stop_on_error=False,
+            api=ApiConfig(
+                endpoint="http://localhost:8080/v1/chat/completions",
+                temperature=0.0,
+                max_tokens=240000,
+                timeout=7200,
+            ),
+            haystack=HaystackConfig(
+                haystack_num=100,
+                needles_num=50,
+                distractors_num=0,
+                key_len=8,
+                val_min=10000,
+                val_max=99999,
+            ),
+            output=OutputConfig(
+                output_filename="results.csv",
+                verbosity="medium",
+                k_quant="Q4_0",
+                v_quant="Q8_0",
+                note="test",
+            ),
+            execution=ExecutionConfig(
+                repeat=1,
+                stop_on_error=False,
+            ),
         )
         _validate_params(config)
 
     def test_valid_num_only(self):
         config = Config(
-            endpoint="http://localhost:8080/v1/chat/completions",
-            k_quant="Q4_0", v_quant="Q8_0", note="test",
-            key_len=8, val_min=10000, val_max=99999,
-            haystack_num=100, needles_num=50,
-            distractors_num=0,
-            temperature=0.0, max_tokens=240000, timeout=7200,
-            output_filename="results.csv", verbosity="medium", repeat=1, seed=42,
-            stop_on_error=False,
+            api=ApiConfig(
+                endpoint="http://localhost:8080/v1/chat/completions",
+                temperature=0.0,
+                max_tokens=240000,
+                timeout=7200,
+            ),
+            haystack=HaystackConfig(
+                haystack_num=100,
+                needles_num=50,
+                distractors_num=0,
+                key_len=8,
+                val_min=10000,
+                val_max=99999,
+            ),
+            output=OutputConfig(
+                output_filename="results.csv",
+                verbosity="medium",
+                k_quant="Q4_0",
+                v_quant="Q8_0",
+                note="test",
+            ),
+            execution=ExecutionConfig(
+                repeat=1,
+                stop_on_error=False,
+            ),
         )
         _validate_params(config)
 

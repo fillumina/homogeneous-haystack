@@ -141,27 +141,47 @@ class Needle:
 
 
 @dataclass
-class Config:
+class ApiConfig:
     endpoint: str
+    temperature: float
+    max_tokens: int
+    timeout: int
+
+
+@dataclass
+class HaystackConfig:
+    haystack_num: int
+    needles_num: int
+    distractors_num: int
+    key_len: int
+    val_min: int
+    val_max: int
+    fuzz: float = 0.49
+    seed: int = 42
+
+
+@dataclass
+class OutputConfig:
     output_filename: str
     verbosity: str
     k_quant: str
     v_quant: str
     note: str
-    key_len: int
-    val_min: int
-    val_max: int
-    haystack_num: int
-    needles_num: int
-    distractors_num: int
-    temperature: float
-    max_tokens: int
-    timeout: int
-    repeat: int
-    stop_on_error: bool
-    seed: int
-    fuzz: float = 0.49
     timestamp: str = ""
+
+
+@dataclass
+class ExecutionConfig:
+    repeat: int = 1
+    stop_on_error: bool = False
+
+
+@dataclass
+class Config:
+    api: ApiConfig
+    haystack: HaystackConfig
+    output: OutputConfig
+    execution: ExecutionConfig
 
 
 @dataclass
@@ -690,11 +710,11 @@ def query_model(
     needle_keys: set[str] = {n.key for n in needles}
 
     raw_response, latency_ms = query_llama(
-        config.endpoint,
+        config.api.endpoint,
         messages,
-        temperature=config.temperature,
-        max_tokens=config.max_tokens,
-        timeout=config.timeout,
+        temperature=config.api.temperature,
+        max_tokens=config.api.max_tokens,
+        timeout=config.api.timeout,
     )
 
     model_name = raw_response.get("model", "unknown") or "unknown"
@@ -707,7 +727,7 @@ def query_model(
     # Consider the output truncated if the completion_tokens equals max_tokens,
     truncated: bool = False
     if usage is not None:
-        truncated = usage.get("completion_tokens") == config.max_tokens
+        truncated = usage.get("completion_tokens") == config.api.max_tokens
 
     # Parse the response text into a dict of key -> value for scoring.
     parsed: dict[str,str] = parse_response(response_text, needle_keys)
@@ -813,16 +833,16 @@ def run_single_experiment(
     Returns data only — printing is handled by the caller (main).
     """
     # each run gets its own seed
-    random.seed(config.seed + run_index)
+    random.seed(config.haystack.seed + run_index)
 
     haystack_text, pairs, needles = generate_haystack_and_needles(
-        haystack_num=config.haystack_num,
-        needles_num=config.needles_num,
-        distractors_num=config.distractors_num,
-        key_len=config.key_len,
-        val_min=config.val_min,
-        val_max=config.val_max,
-        fuzz=config.fuzz,
+        haystack_num=config.haystack.haystack_num,
+        needles_num=config.haystack.needles_num,
+        distractors_num=config.haystack.distractors_num,
+        key_len=config.haystack.key_len,
+        val_min=config.haystack.val_min,
+        val_max=config.haystack.val_max,
+        fuzz=config.haystack.fuzz,
     )
 
     result, debug = query_model(config, needles, haystack_text)
@@ -859,21 +879,21 @@ def run_single_experiment(
 
 def _validate_params(config: Config) -> None:
     """Validate parameters for haystack and needle generation."""
-    if config.haystack_num < 1:
-        raise ValueError(f"haystack_num must be >= 1, got {config.haystack_num}")
-    if config.needles_num < 1:
-        raise ValueError(f"needles_num must be >= 1, got {config.needles_num}")
-    if config.distractors_num < 0:
+    if config.haystack.haystack_num < 1:
+        raise ValueError(f"haystack_num must be >= 1, got {config.haystack.haystack_num}")
+    if config.haystack.needles_num < 1:
+        raise ValueError(f"needles_num must be >= 1, got {config.haystack.needles_num}")
+    if config.haystack.distractors_num < 0:
         raise ValueError(
-            f"distractors_num must be >= 0, got {config.distractors_num}"
+            f"distractors_num must be >= 0, got {config.haystack.distractors_num}"
         )
-    if config.key_len < 1:
-        raise ValueError(f"key_len must be >= 1, got {config.key_len}")
-    if config.val_min > config.val_max:
-        raise ValueError(f"val_min ({config.val_min}) > val_max ({config.val_max})")
-    if config.fuzz < 0 or config.fuzz >= MAX_FUZZ:
+    if config.haystack.key_len < 1:
+        raise ValueError(f"key_len must be >= 1, got {config.haystack.key_len}")
+    if config.haystack.val_min > config.haystack.val_max:
+        raise ValueError(f"val_min ({config.haystack.val_min}) > val_max ({config.haystack.val_max})")
+    if config.haystack.fuzz < 0 or config.haystack.fuzz >= MAX_FUZZ:
         raise ValueError(
-            f"fuzz must be in [0, {MAX_FUZZ}), got {config.fuzz}. "
+            f"fuzz must be in [0, {MAX_FUZZ}), got {config.haystack.fuzz}. "
             f"Values >= {MAX_FUZZ} risk needle position collisions."
         )
 
@@ -1117,10 +1137,10 @@ def _print_needle_results(
 def _build_summary_row(config: Config, model_name: str, summary: ExperimentSummary) -> dict:
     """Build a single experiment summary row as a dictionary."""
     row = {
-        "timestamp": config.timestamp,
+        "timestamp": config.output.timestamp,
         "model_name": model_name,
-        "k_quant": config.k_quant,
-        "v_quant": config.v_quant,
+        "k_quant": config.output.k_quant,
+        "v_quant": config.output.v_quant,
         "prompt_tokens": summary.prompt_tokens,
         "completion_tokens": summary.completion_tokens,
         "total_tokens": summary.total_tokens,
@@ -1132,7 +1152,7 @@ def _build_summary_row(config: Config, model_name: str, summary: ExperimentSumma
         "tokens_per_sec": summary.tokens_per_sec,
         "total_time_sec": summary.total_time_sec,
         "distractor_failures": summary.distractor_failures,
-        "note": config.note,
+        "note": config.output.note,
     }
     for i, col in enumerate(_SUMMARY_BUCKET_COLS):
         row[col] = summary.ctx_pos_buckets[i]
@@ -1146,10 +1166,10 @@ def _write_summary_csv(config: Config, model_name: str, summaries: list[Experime
     file does not exist or is empty. Writes all rows in a single open block.
     """
     write_header = False
-    if not os.path.exists(config.output_filename) or os.path.getsize(config.output_filename) == 0:
+    if not os.path.exists(config.output.output_filename) or os.path.getsize(config.output.output_filename) == 0:
         write_header = True
 
-    with open(config.output_filename, "a", newline="") as f:
+    with open(config.output.output_filename, "a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=SUMMARY_CSV_COLUMNS)
         if write_header:
             writer.writeheader()
@@ -1225,26 +1245,34 @@ def _create_configuration() -> Config:
     actual_seed = args.seed if args.seed is not None else secrets.randbits(31)
 
     config = Config(
-        endpoint=args.endpoint,
-        output_filename=args.output,
-        verbosity=args.verbosity,
-        k_quant=args.k_quant,
-        v_quant=args.v_quant,
-        note=args.note,
-        key_len=args.key_len,
-        val_min=args.val_min,
-        val_max=args.val_max,
-        haystack_num=args.haystack_num,
-        needles_num=actual_real_needles,
-        distractors_num=actual_distractors,
-        temperature=args.temperature,
-        max_tokens=args.max_tokens,
-        timeout=args.timeout,
-        repeat=args.repeat,
-        stop_on_error=args.stop_on_error,
-        seed=actual_seed,
-        fuzz=args.fuzz,
-        timestamp=datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+        api=ApiConfig(
+            endpoint=args.endpoint,
+            temperature=args.temperature,
+            max_tokens=args.max_tokens,
+            timeout=args.timeout,
+        ),
+        haystack=HaystackConfig(
+            haystack_num=args.haystack_num,
+            needles_num=actual_real_needles,
+            distractors_num=actual_distractors,
+            key_len=args.key_len,
+            val_min=args.val_min,
+            val_max=args.val_max,
+            fuzz=args.fuzz,
+            seed=actual_seed,
+        ),
+        output=OutputConfig(
+            output_filename=args.output,
+            verbosity=args.verbosity,
+            k_quant=args.k_quant,
+            v_quant=args.v_quant,
+            note=args.note,
+            timestamp=datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+        ),
+        execution=ExecutionConfig(
+            repeat=args.repeat,
+            stop_on_error=args.stop_on_error,
+        ),
     )
 
     _validate_params(config)
@@ -1254,14 +1282,14 @@ def _create_configuration() -> Config:
 
 def _print_config(config: Config) -> None:
     """Print benchmark configuration parameters before starting runs."""
-    print(f"Seed: {config.seed}")
-    print(f"Endpoint: {config.endpoint}")
-    total_needles = config.needles_num + config.distractors_num
-    distractors_pct = int(config.distractors_num * 100.0 / total_needles)
-    print(f"Haystack: {config.haystack_num} pairs, {total_needles} needles "
-          f"({config.needles_num} real + {config.distractors_num} distractors, "
+    print(f"Seed: {config.haystack.seed}")
+    print(f"Endpoint: {config.api.endpoint}")
+    total_needles = config.haystack.needles_num + config.haystack.distractors_num
+    distractors_pct = int(config.haystack.distractors_num * 100.0 / total_needles)
+    print(f"Haystack: {config.haystack.haystack_num} pairs, {total_needles} needles "
+          f"({config.haystack.needles_num} real + {config.haystack.distractors_num} distractors, "
           f"{distractors_pct:.0f}% distractors)")
-    print(f"Output: {config.output_filename}")
+    print(f"Output: {config.output.output_filename}")
     print()
 
 
@@ -1272,8 +1300,8 @@ def main() -> None:
     _print_config(config)
 
     global_result = GlobalResult()
-    is_minimal = config.verbosity == "minimal"
-    is_debug = config.verbosity == "debug"
+    is_minimal = config.output.verbosity == "minimal"
+    is_debug = config.output.verbosity == "debug"
 
     run_experiment_loop(config, global_result, is_minimal, is_debug)
 
@@ -1297,7 +1325,7 @@ def run_experiment_loop(
     is_debug: bool,
 ) -> None:
     """Run all experiment repeats, handling results and errors."""
-    for run_idx in range(config.repeat):
+    for run_idx in range(config.execution.repeat):
         try:
             model_result: ModelResult = run_single_experiment(
                 run_idx, config
@@ -1312,10 +1340,10 @@ def run_experiment_loop(
             if summary is not None and stats:
                 run_timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 # Print per-run output based on verbosity
-                print(f"Run {run_idx + 1}/{config.repeat}: Done!")
+                print(f"Run {run_idx + 1}/{config.execution.repeat}: Done!")
                 if is_minimal:
                     _print_run_minimal(
-                        run_idx + 1, config.repeat,
+                        run_idx + 1, config.execution.repeat,
                         summary, stats, run_rows_for_this, run_timestamp
                     )
                 else:
@@ -1323,7 +1351,7 @@ def run_experiment_loop(
                     _print_needle_results(
                         run_idx + 1, model_result.needles, model_result.pairs,
                         parsed=model_result.parsed,
-                        verbosity=config.verbosity,
+                        verbosity=config.output.verbosity,
                         debug=model_result.debug,
                     )
                 if is_debug:
@@ -1338,7 +1366,7 @@ def run_experiment_loop(
             print(f"QUERY ERROR: Run {run_idx + 1} — {e}")
             print("=" * 60)
             print()
-            if config.stop_on_error:
+            if config.execution.stop_on_error:
                 print("Stopping early due to --stop-on-error")
                 break
 
@@ -1351,7 +1379,7 @@ def _print_summary(
     model_name: str,
 ) -> None:
     """Print a comprehensive summary of the experiment."""
-    is_minimal = config.verbosity == "minimal"
+    is_minimal = config.output.verbosity == "minimal"
 
     print()
     print("=" * 60)
@@ -1360,35 +1388,35 @@ def _print_summary(
 
     if is_minimal:
         print(f"  Model:           {model_name}")
-        print(f"  Haystack size:   {config.haystack_num}")
-        print(f"  Seeds:           {config.seed}")
-        print(f"  Repeat:          {config.repeat}")
+        print(f"  Haystack size:   {config.haystack.haystack_num}")
+        print(f"  Seeds:           {config.haystack.seed}")
+        print(f"  Repeat:          {config.execution.repeat}")
     else:
         # Configuration
         print("\nConfiguration:")
-        print(f"  Timestamp:       {config.timestamp}")
+        print(f"  Timestamp:       {config.output.timestamp}")
         if model_name == "unknown":
             print(f"  Model:           <no successful runs>")
         else:
             print(f"  Model:           {model_name}")
-        print(f"  Haystack size:   {config.haystack_num}")
-        print(f"  Num needles:     {config.needles_num + config.distractors_num} ({config.needles_num} real + {config.distractors_num} distractors)")
-        distractor_pct = config.distractors_num / (config.needles_num + config.distractors_num)
-        print(f"  Distractors:     {config.distractors_num} (exact count) ({distractor_pct * 100:.1f}%)")
-        print(f"  Key length:      {config.key_len}")
-        print(f"  Value range:     {config.val_min} - {config.val_max}")
-        print(f"  Temperature:     {config.temperature}")
-        print(f"  Max tokens:      {config.max_tokens}")
-        print(f"  Timeout:         {config.timeout}s")
-        print(f"  Seed:            {config.seed}")
-        print(f"  Repeat:          {config.repeat}")
-        print(f"  Endpoint:        {config.endpoint}")
-        if config.k_quant:
-            print(f"  K quant:         {config.k_quant}")
-        if config.v_quant:
-            print(f"  V quant:         {config.v_quant}")
-        if config.note:
-            print(f"  Note:            {config.note}")
+        print(f"  Haystack size:   {config.haystack.haystack_num}")
+        print(f"  Num needles:     {config.haystack.needles_num + config.haystack.distractors_num} ({config.haystack.needles_num} real + {config.haystack.distractors_num} distractors)")
+        distractor_pct = config.haystack.distractors_num / (config.haystack.needles_num + config.haystack.distractors_num)
+        print(f"  Distractors:     {config.haystack.distractors_num} (exact count) ({distractor_pct * 100:.1f}%)")
+        print(f"  Key length:      {config.haystack.key_len}")
+        print(f"  Value range:     {config.haystack.val_min} - {config.haystack.val_max}")
+        print(f"  Temperature:     {config.api.temperature}")
+        print(f"  Max tokens:      {config.api.max_tokens}")
+        print(f"  Timeout:         {config.api.timeout}s")
+        print(f"  Seed:            {config.haystack.seed}")
+        print(f"  Repeat:          {config.execution.repeat}")
+        print(f"  Endpoint:        {config.api.endpoint}")
+        if config.output.k_quant:
+            print(f"  K quant:         {config.output.k_quant}")
+        if config.output.v_quant:
+            print(f"  V quant:         {config.output.v_quant}")
+        if config.output.note:
+            print(f"  Note:            {config.output.note}")
 
     # Per-run results
     if summaries:
@@ -1437,7 +1465,7 @@ def _print_summary(
             print(f"  Truncated runs:    {result.truncated_runs}")
             print("  (completion_tokens reached max_tokens — model was cut off)")
 
-    print(f"\nOutput: {config.output_filename}")
+    print(f"\nOutput: {config.output.output_filename}")
 
     elapsed = datetime.datetime.now() - start_time if start_time else datetime.timedelta(0)
     minutes, remainder = divmod(int(elapsed.total_seconds()), 60)

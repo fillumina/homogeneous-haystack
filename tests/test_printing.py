@@ -1,12 +1,16 @@
 import datetime
 
 from haystack_test import (
+    ApiConfig,
     Config,
     DebugContext,
+    ExecutionConfig,
     ExperimentSummary,
     GlobalResult,
+    HaystackConfig,
     Message,
     Needle,
+    OutputConfig,
     ResultRow,
     _print_debug_context,
     _print_message,
@@ -39,26 +43,35 @@ class TestPrintMessage:
 class TestPrintSummary:
     def _make_config(self):
         return Config(
+        api=ApiConfig(
             endpoint="http://localhost:8080/v1/chat/completions",
-            k_quant="Q4_0",
-            v_quant="Q8_0",
-            note="test",
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            haystack_num=100,
-            needles_num=10,
-            distractors_num=2,
             temperature=0.0,
             max_tokens=240000,
             timeout=7200,
+        ),
+        haystack=HaystackConfig(
+            haystack_num=100,
+            needles_num=10,
+            distractors_num=2,
+            key_len=8,
+            val_min=10000,
+            val_max=99999,
+            fuzz=0.49,
             seed=42,
-            stop_on_error=False,
-            repeat=1,
+        ),
+        output=OutputConfig(
             output_filename="results.csv",
             verbosity="medium",
+            k_quant="Q4_0",
+            v_quant="Q8_0",
+            note="test",
             timestamp="2024-01-01T10:00:00",
-        )
+        ),
+        execution=ExecutionConfig(
+            repeat=1,
+            stop_on_error=False,
+        ),
+    )
 
     def _make_rows(self):
         return [
