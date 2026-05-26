@@ -109,7 +109,7 @@ class Payload(TypedDict):
     stream: bool
 
 
-class RunStats(TypedDict, total=False):
+class RunStats(TypedDict):
     total_tokens: int
     total_latency_ms: int | float
     total_completion: int
@@ -202,8 +202,8 @@ class GlobalResult:
     def add_model_result(self, run_idx:int, model_result: ModelResult) -> GlobalResultType:
         self.all_rows.extend(model_result.rows)
         self.all_stats.append(model_result.stats)
-        error = model_result.stats.get("error")
-        truncated = model_result.stats.get("truncated")
+        error = model_result.stats["error"]
+        truncated = model_result.stats["truncated"]
         if error:
             raise HaystackQueryError(error)
         elif truncated:
@@ -844,6 +844,7 @@ def run_single_experiment(
     total_latency = result.latency_ms
     total_completion = result.usage["completion_tokens"] if result.usage else 0
 
+    tokens_per_sec = round(total_completion / (total_latency / 1000), 1) if total_latency > 0 else 0.0
     stats: RunStats = {
         "total_tokens": total_tokens,
         "total_latency_ms": total_latency,
@@ -851,12 +852,9 @@ def run_single_experiment(
         "error": None,
         "truncated": result.truncated,
         "model_name": debug.model_name,
+        "tokens_per_sec": tokens_per_sec,
+        "avg_latency_ms": round(total_latency / len(needles), 1) if needles else 0.0,
     }
-    if total_latency > 0:
-        stats["tokens_per_sec"] = round(total_completion / (total_latency / 1000), 1)
-    stats["avg_latency_ms"] = round(
-        total_latency / len(needles), 1
-    ) if needles else 0.0
 
     return ModelResult(
         rows=rows,
@@ -911,9 +909,9 @@ def compute_experiment_summary(
             continue
 
         stats = global_result.all_stats[run_idx]
-        total_tokens = stats.get("total_tokens") or 0
-        total_latency_ms = stats.get("total_latency_ms") or 0
-        total_completion = stats.get("total_completion") or 0
+        total_tokens = stats["total_tokens"] or 0
+        total_latency_ms = stats["total_latency_ms"] or 0
+        total_completion = stats["total_completion"] or 0
         total_prompt = 0
         total_completion_api = 0
 
@@ -943,7 +941,7 @@ def compute_experiment_summary(
         distractor_failures = distractor_total - distractor_correct
 
         # Compute tokens/sec and total time
-        tokens_per_sec = stats.get("tokens_per_sec", 0.0)
+        tokens_per_sec = stats["tokens_per_sec"]
         total_time_sec = total_latency_ms / 1000.0
 
         # Collect usage from first row
@@ -999,8 +997,8 @@ def _print_run_minimal(
     needle_rows = [r for r in run_rows if not r.is_distractor]
     distractor_rows = [r for r in run_rows if r.is_distractor]
 
-    error = stats.get("error")
-    truncated = stats.get("truncated")
+    error = stats["error"]
+    truncated = stats["truncated"]
 
     if error:
         print(f"{timestamp} Run {run_number}/{run_total}: ERROR ({error})")
@@ -1034,11 +1032,11 @@ def _print_run_detail(
     needle_correct = sum(1 for r in needle_rows if r.correct == 1)
     distractor_correct = sum(1 for r in distractor_rows if r.correct == 1)
 
-    total_tokens = stats.get("total_tokens", 0) or 0
-    avg_lat = stats.get("avg_latency_ms", 0) or 0
-    tps = stats.get("tokens_per_sec", 0)
-    error = stats.get("error")
-    truncated = stats.get("truncated")
+    total_tokens = stats["total_tokens"] or 0
+    avg_lat = stats["avg_latency_ms"] or 0
+    tps = stats["tokens_per_sec"]
+    error = stats["error"]
+    truncated = stats["truncated"]
 
     if timestamp is not None:
         print(f"  Timestamp:       {timestamp}")

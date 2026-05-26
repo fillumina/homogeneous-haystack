@@ -114,8 +114,8 @@ class TestRunSingleExperiment:
         config = self._make_config()
         result = run_single_experiment(1, config)
 
-        # tokens_per_sec should not be calculated when latency is 0
-        assert "tokens_per_sec" not in result.stats
+        # tokens_per_sec is 0.0 when latency is 0
+        assert result.stats["tokens_per_sec"] == 0.0
 
     @patch("haystack_test.query_llama")
     def test_stats_avg_latency_with_needles(self, mock_query_llama):
