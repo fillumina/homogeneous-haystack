@@ -19,12 +19,11 @@ import random
 import secrets
 import socket
 import string
-import sys
 import time
 import os
 import urllib.error
 import urllib.request
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import NamedTuple, TypedDict
 from enum import Enum, auto
 
@@ -115,6 +114,20 @@ class RunStats(TypedDict):
     model_name: str | None
     tokens_per_sec: float
     avg_latency_ms: float
+
+
+def _make_default_stats() -> RunStats:
+    """Return a default RunStats with zero/None values."""
+    return {
+        "total_tokens": 0,
+        "total_latency_ms": 0,
+        "total_completion": 0,
+        "error": None,
+        "truncated": None,
+        "model_name": None,
+        "tokens_per_sec": 0.0,
+        "avg_latency_ms": 0.0,
+    }
 
 
 @dataclass(frozen=True)
@@ -894,7 +907,6 @@ def compute_experiment_summary(
         stats = global_result.all_stats[run_idx]
         total_tokens = stats["total_tokens"] or 0
         total_latency_ms = stats["total_latency_ms"] or 0
-        total_completion = stats["total_completion"] or 0
         total_prompt = 0
         total_completion_api = 0
 
@@ -1048,10 +1060,10 @@ def _print_run_detail(
         labels = ["0-10%", "10-20%", "20-30%", "30-40%", "40-50%",
                   "50-60%", "60-70%", "70-80%", "80-90%", "90-100%"]
         max_val = max(summary.ctx_pos_buckets) if summary.ctx_pos_buckets else 0
-        col_width = max(len(l) for l in labels) + 1
+        col_width = max(len(label) for label in labels) + 1
         col_width = max(col_width, len(str(max_val)) + 1)
         print("  Failures by 10% interval:")
-        print("    " + " ".join(_pad_right(l, col_width) for l in labels))
+        print("    " + " ".join(_pad_right(label, col_width) for label in labels))
         print("    " + " ".join(_pad_right(b, col_width) for b in summary.ctx_pos_buckets))
 
 
@@ -1280,7 +1292,7 @@ def main() -> None:
     run_experiment_loop(config, global_result, is_minimal, is_debug)
 
     summaries = compute_experiment_summary(global_result)
-    model_name = global_result.all_stats[0].get("model_name", "unknown") if global_result.all_stats else "unknown"
+    model_name = global_result.all_stats[0].get("model_name") or "unknown" if global_result.all_stats else "unknown"
     _write_summary_csv(config, model_name, summaries)
 
     _print_summary(
@@ -1308,7 +1320,7 @@ def run_experiment_loop(
             status = global_result.add_model_result(run_idx, model_result)
             summaries = compute_experiment_summary(global_result)
             summary = summaries[-1] if summaries else None
-            stats = global_result.all_stats[run_idx] if global_result.all_stats else {}
+            stats = global_result.all_stats[run_idx] if global_result.all_stats else _make_default_stats()
             run_rows_for_this = [r for r in global_result.all_rows if r.run == run_idx]
 
             if summary is not None and stats:
@@ -1370,7 +1382,7 @@ def _print_summary(
         print("\nConfiguration:")
         print(f"  Timestamp:       {config.output.timestamp}")
         if model_name == "unknown":
-            print(f"  Model:           <no successful runs>")
+            print("  Model:           <no successful runs>")
         else:
             print(f"  Model:           {model_name}")
         print(f"  Haystack size:   {config.haystack.haystack_num}")
@@ -1400,7 +1412,7 @@ def _print_summary(
             run_rows_by_run.setdefault(r.run, []).append(r)
         if is_minimal:
             for i, s in enumerate(summaries):
-                stats = result.all_stats[i] if i < len(result.all_stats) else {}
+                stats = result.all_stats[i] if i < len(result.all_stats) else _make_default_stats()
                 run_rows_for_this = run_rows_by_run.get(i, [])
                 needle_rows = [r for r in run_rows_for_this if not r.is_distractor]
                 distractor_rows = [r for r in run_rows_for_this if r.is_distractor]
@@ -1409,7 +1421,7 @@ def _print_summary(
                 print(f"  Run {i+1}: Needles {needle_pct} | Distractors {distractor_pct_run}")
         else:
             for i, s in enumerate(summaries):
-                stats = result.all_stats[i] if i < len(result.all_stats) else {}
+                stats = result.all_stats[i] if i < len(result.all_stats) else _make_default_stats()
                 run_rows_for_this = run_rows_by_run.get(i, [])
                 _print_run_detail(i + 1, s, stats, run_rows_for_this, timestamp=None)
 
