@@ -1119,50 +1119,36 @@ def _print_needle_results(
                       f"(distractor, expected=not_found actual={score.actual!r})")
 
 
-def _write_summary_row(config: Config, model_name: str, summary: ExperimentSummary) -> None:
-    """Write a single experiment summary row to CSV in append mode.
-
-    Args:
-        config: The experiment configuration.
-        model_name: Name of the model being tested.
-        summary: The experiment summary to write.
-    """
-    with open(config.output_filename, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=SUMMARY_CSV_COLUMNS)
-        row = {
-            "timestamp": config.timestamp,
-            "model_name": model_name,
-            "k_quant": config.k_quant,
-            "v_quant": config.v_quant,
-            "prompt_tokens": summary.prompt_tokens,
-            "completion_tokens": summary.completion_tokens,
-            "total_tokens": summary.total_tokens,
-            "total_pairs": summary.total_pairs,
-            "needles_num": summary.needles_num,
-            "distractors_num": summary.distractors_num,
-            "needle_success_pct": f"{summary.needle_success_pct:.2f}",
-            "distractor_success_pct": f"{summary.distractor_success_pct:.2f}",
-            "tokens_per_sec": summary.tokens_per_sec,
-            "total_time_sec": summary.total_time_sec,
-            "distractor_failures": summary.distractor_failures,
-            "note": config.note,
-        }
-        for i, col in enumerate(_SUMMARY_BUCKET_COLS):
-            row[col] = summary.ctx_pos_buckets[i]
-        writer.writerow(row)
-
-
-# ---------------------------------------------------------------------------
-# Summary CSV writing
-# ---------------------------------------------------------------------------
+def _build_summary_row(config: Config, model_name: str, summary: ExperimentSummary) -> dict:
+    """Build a single experiment summary row as a dictionary."""
+    row = {
+        "timestamp": config.timestamp,
+        "model_name": model_name,
+        "k_quant": config.k_quant,
+        "v_quant": config.v_quant,
+        "prompt_tokens": summary.prompt_tokens,
+        "completion_tokens": summary.completion_tokens,
+        "total_tokens": summary.total_tokens,
+        "total_pairs": summary.total_pairs,
+        "needles_num": summary.needles_num,
+        "distractors_num": summary.distractors_num,
+        "needle_success_pct": f"{summary.needle_success_pct:.2f}",
+        "distractor_success_pct": f"{summary.distractor_success_pct:.2f}",
+        "tokens_per_sec": summary.tokens_per_sec,
+        "total_time_sec": summary.total_time_sec,
+        "distractor_failures": summary.distractor_failures,
+        "note": config.note,
+    }
+    for i, col in enumerate(_SUMMARY_BUCKET_COLS):
+        row[col] = summary.ctx_pos_buckets[i]
+    return row
 
 
 def _write_summary_csv(config: Config, model_name: str, summaries: list[ExperimentSummary]) -> None:
     """Write experiment summaries to CSV in append mode.
 
     Opens the file in append mode. Writes the header row only if the
-    file does not exist or is empty. Delegates row writing to
-    _write_summary_row.
+    file does not exist or is empty. Writes all rows in a single open block.
     """
     write_header = False
     if not os.path.exists(config.output_filename) or os.path.getsize(config.output_filename) == 0:
@@ -1173,7 +1159,8 @@ def _write_summary_csv(config: Config, model_name: str, summaries: list[Experime
         if write_header:
             writer.writeheader()
         for summary in summaries:
-            _write_summary_row(config, model_name, summary)
+            row = _build_summary_row(config, model_name, summary)
+            writer.writerow(row)
 
 
 # ---------------------------------------------------------------------------
@@ -1290,10 +1277,31 @@ def main() -> None:
     _print_config(config)
 
     global_result = GlobalResult()
-
     is_minimal = config.verbosity == "minimal"
     is_debug = config.verbosity == "debug"
 
+    run_experiment_loop(config, global_result, is_minimal, is_debug)
+
+    summaries = compute_experiment_summary(config, global_result)
+    model_name = global_result.all_stats[0].get("model_name", "unknown") if global_result.all_stats else "unknown"
+    _write_summary_csv(config, model_name, summaries)
+
+    _print_summary(
+        config=config,
+        result=global_result,
+        summaries=summaries,
+        start_time=start_time,
+        model_name=model_name,
+    )
+
+
+def run_experiment_loop(
+    config: Config,
+    global_result: GlobalResult,
+    is_minimal: bool,
+    is_debug: bool,
+) -> None:
+    """Run all experiment repeats, handling results and errors."""
     for run_idx in range(config.repeat):
         try:
             model_result: ModelResult = run_single_experiment(
@@ -1308,8 +1316,6 @@ def main() -> None:
 
             if summary is not None and stats:
                 run_timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                # Write row to CSV immediately
-                _write_summary_row(config, model_result.model_name, summary)
                 # Print per-run output based on verbosity
                 print(f"Run {run_idx + 1}/{config.repeat}: Done!")
                 if is_minimal:
@@ -1340,18 +1346,6 @@ def main() -> None:
             if config.stop_on_error:
                 print("Stopping early due to --stop-on-error")
                 break
-
-    summaries = compute_experiment_summary(config, global_result)
-    model_name = global_result.all_stats[0].get("model_name", "unknown") if global_result.all_stats else "unknown"
-    _write_summary_csv(config, model_name, summaries)
-
-    _print_summary(
-        config=config,
-        result=global_result,
-        summaries=summaries,
-        start_time=start_time,
-        model_name=model_name,
-    )
 
 
 def _print_summary(

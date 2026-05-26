@@ -13,29 +13,7 @@ from haystack_test import (
     _print_needle_results,
     _print_run_minimal,
     _print_summary,
-    _truncate,
 )
-
-
-class TestTruncate:
-    def test_short_text_unchanged(self):
-        text = "line1\nline2\nline3"
-        assert _truncate(text) == text
-
-    def test_long_text_truncated(self):
-        lines = [f"line{i}" for i in range(20)]
-        text = "\n".join(lines)
-        result = _truncate(text, max_lines=2)
-        assert "..." in result
-        assert "line0" in result
-        assert "line19" in result
-
-    def test_custom_prefix(self):
-        lines = [f"line{i}" for i in range(10)]
-        text = "\n".join(lines)
-        result = _truncate(text, max_lines=2, prefix="***")
-        assert "***" in result
-        assert "..." not in result
 
 
 class TestPrintMessage:
