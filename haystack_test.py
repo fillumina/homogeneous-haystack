@@ -820,7 +820,7 @@ def run_single_experiment(
 
     Returns data only — printing is handled by the caller (main).
     """
-    # each run gets its onw seed
+    # each run gets its own seed
     random.seed(config.seed + run_index)
 
     haystack_text, pairs, needles = generate_haystack_and_needles(
