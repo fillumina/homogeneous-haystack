@@ -64,18 +64,18 @@ class TestPickNeedlePositions:
 class TestSelectNeedles:
     def test_returns_list(self, haystack_pairs):
         _, pairs = haystack_pairs
-        result = select_needles(pairs, 10)
+        result = select_needles(pairs, HaystackConfig(needles_num=10))
         assert isinstance(result, list)
 
     def test_correct_total_count(self, haystack_pairs):
         _, pairs = haystack_pairs
-        result = select_needles(pairs, 20)
+        result = select_needles(pairs, HaystackConfig(needles_num=20))
         assert len(result) == 20
 
     def test_real_needles_count(self, haystack_pairs):
         """select_needles returns all needles as real needles now."""
         _, pairs = haystack_pairs
-        result = select_needles(pairs, 25)
+        result = select_needles(pairs, HaystackConfig(needles_num=25))
         assert len(result) == 25
         for n in result:
             assert n.is_distractor is False
@@ -83,8 +83,8 @@ class TestSelectNeedles:
     def test_distractor_needles_separate(self, haystack_pairs):
         """Distractors are created by create_distractor_keys, not select_needles."""
         _, pairs = haystack_pairs
-        real = select_needles(pairs, 20)
-        distractors = create_distractor_keys(pairs, 5, 20, 8)
+        real = select_needles(pairs, HaystackConfig(needles_num=20))
+        distractors = create_distractor_keys(HaystackConfig(distractors_num=5, key_len=8), pairs, 20)
         assert len(real) == 20
         assert len(distractors) == 5
         for n in real:
@@ -94,7 +94,7 @@ class TestSelectNeedles:
 
     def test_real_needles_have_expected_values(self, haystack_pairs):
         _, pairs = haystack_pairs
-        result = select_needles(pairs, 10)
+        result = select_needles(pairs, HaystackConfig(needles_num=10))
         for needle in result:
             assert needle.expected is not None
             assert isinstance(needle.expected, int)
@@ -102,38 +102,38 @@ class TestSelectNeedles:
 
     def test_distractor_needles_have_none_expected(self, haystack_pairs):
         _, pairs = haystack_pairs
-        distractors = create_distractor_keys(pairs, 10, 20, 8)
+        distractors = create_distractor_keys(HaystackConfig(distractors_num=10, key_len=8), pairs, 20)
         for needle in distractors:
             assert needle.expected is None
             assert needle.is_distractor is True
 
     def test_needles_sorted_by_index(self, haystack_pairs):
         _, pairs = haystack_pairs
-        result = select_needles(pairs, 20)
+        result = select_needles(pairs, HaystackConfig(needles_num=20))
         indices = [n.index for n in result]
         assert indices == sorted(indices)
 
     def test_indices_in_valid_range(self, haystack_pairs):
         _, pairs = haystack_pairs
-        result = select_needles(pairs, 20)
+        result = select_needles(pairs, HaystackConfig(needles_num=20))
         for needle in result:
             assert 0 <= needle.index < len(pairs)
 
     def test_distractor_keys_not_in_haystack(self, haystack_pairs, haystack_keys):
         _, pairs = haystack_pairs
-        distractors = create_distractor_keys(pairs, 5, 20, 8)
+        distractors = create_distractor_keys(HaystackConfig(distractors_num=5, key_len=8), pairs, 20)
         for needle in distractors:
             assert needle.key not in haystack_keys
 
     def test_real_needles_keys_in_haystack(self, haystack_pairs, haystack_keys):
         _, pairs = haystack_pairs
-        result = select_needles(pairs, 20)
+        result = select_needles(pairs, HaystackConfig(needles_num=20))
         for needle in result:
             assert needle.key in haystack_keys
 
     def test_all_needles_have_required_fields(self, haystack_pairs):
         _, pairs = haystack_pairs
-        result = select_needles(pairs, 10)
+        result = select_needles(pairs, HaystackConfig(needles_num=10))
         for needle in result:
             assert isinstance(needle, Needle)
             assert hasattr(needle, "index")
@@ -263,15 +263,7 @@ class TestNumNeedlesGreaterThanHaystackN:
         seeded_random(42)
         haystack_num = 17
         needles_num = 100
-        _, pairs, needles = generate_haystack_and_needles(
-            haystack_num=haystack_num,
-            needles_num=needles_num,
-            distractors_num=2,
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            fuzz=0,
-        )
+        _, _, needles = generate_haystack_and_needles(HaystackConfig(haystack_num=haystack_num, needles_num=needles_num, distractors_num=2, key_len=8, val_min=10000, val_max=99999, fuzz=0))
         real = [n for n in needles if not n.is_distractor]
         assert len(real) == haystack_num
 
@@ -279,15 +271,7 @@ class TestNumNeedlesGreaterThanHaystackN:
         seeded_random(42)
         haystack_num = 17
         needles_num = 100
-        _, _, needles = generate_haystack_and_needles(
-            haystack_num=haystack_num,
-            needles_num=needles_num,
-            distractors_num=2,
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            fuzz=0,
-        )
+        _, _, needles = generate_haystack_and_needles(HaystackConfig(haystack_num=haystack_num, needles_num=needles_num, distractors_num=2, key_len=8, val_min=10000, val_max=99999, fuzz=0))
         real = [n for n in needles if not n.is_distractor]
         distractors = [n for n in needles if n.is_distractor]
         assert len(distractors) == 2
@@ -296,15 +280,7 @@ class TestNumNeedlesGreaterThanHaystackN:
         seeded_random(42)
         haystack_num = 17
         needles_num = 100
-        _, _, needles = generate_haystack_and_needles(
-            haystack_num=haystack_num,
-            needles_num=needles_num,
-            distractors_num=2,
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            fuzz=0,
-        )
+        _, _, needles = generate_haystack_and_needles(HaystackConfig(haystack_num=haystack_num, needles_num=needles_num, distractors_num=2, key_len=8, val_min=10000, val_max=99999, fuzz=0))
         real = [n for n in needles if not n.is_distractor]
         distractors = [n for n in needles if n.is_distractor]
         assert len(needles) == len(real) + len(distractors)
@@ -313,15 +289,7 @@ class TestNumNeedlesGreaterThanHaystackN:
         seeded_random(42)
         haystack_num = 100
         needles_num = 50
-        _, _, needles = generate_haystack_and_needles(
-            haystack_num=haystack_num,
-            needles_num=needles_num,
-            distractors_num=5,
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            fuzz=0,
-        )
+        _, _, needles = generate_haystack_and_needles(HaystackConfig(haystack_num=haystack_num, needles_num=needles_num, distractors_num=5, key_len=8, val_min=10000, val_max=99999, fuzz=0))
         real = [n for n in needles if not n.is_distractor]
         distractors = [n for n in needles if n.is_distractor]
         assert len(real) == needles_num
@@ -331,15 +299,7 @@ class TestNumNeedlesGreaterThanHaystackN:
         seeded_random(42)
         haystack_num = 17
         needles_num = 100
-        _, _, needles = generate_haystack_and_needles(
-            haystack_num=haystack_num,
-            needles_num=needles_num,
-            distractors_num=0,
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            fuzz=0,
-        )
+        _, _, needles = generate_haystack_and_needles(HaystackConfig(haystack_num=haystack_num, needles_num=needles_num, distractors_num=0, key_len=8, val_min=10000, val_max=99999, fuzz=0))
         distractors = [n for n in needles if n.is_distractor]
         assert len(distractors) == 0
 
@@ -350,15 +310,7 @@ class TestDistractorsNum:
         haystack_num = 50
         needles_num = 20
         exact_distractors = 5
-        _, _, needles = generate_haystack_and_needles(
-            haystack_num=haystack_num,
-            needles_num=needles_num,
-            distractors_num=exact_distractors,
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            fuzz=0,
-        )
+        _, _, needles = generate_haystack_and_needles(HaystackConfig(haystack_num=haystack_num, needles_num=needles_num, distractors_num=exact_distractors, key_len=8, val_min=10000, val_max=99999, fuzz=0))
         real = [n for n in needles if not n.is_distractor]
         distractors = [n for n in needles if n.is_distractor]
         assert len(real) == needles_num
@@ -368,15 +320,7 @@ class TestDistractorsNum:
         seeded_random(42)
         haystack_num = 17
         needles_num = 100
-        _, _, needles = generate_haystack_and_needles(
-            haystack_num=haystack_num,
-            needles_num=needles_num,
-            distractors_num=0,
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            fuzz=0,
-        )
+        _, _, needles = generate_haystack_and_needles(HaystackConfig(haystack_num=haystack_num, needles_num=needles_num, distractors_num=0, key_len=8, val_min=10000, val_max=99999, fuzz=0))
         distractors = [n for n in needles if n.is_distractor]
         assert len(distractors) == 0
 
@@ -384,15 +328,7 @@ class TestDistractorsNum:
         seeded_random(42)
         haystack_num = 50
         needles_num = 20
-        _, _, needles = generate_haystack_and_needles(
-            haystack_num=haystack_num,
-            needles_num=needles_num,
-            distractors_num=2,
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            fuzz=0,
-        )
+        _, _, needles = generate_haystack_and_needles(HaystackConfig(haystack_num=haystack_num, needles_num=needles_num, distractors_num=2, key_len=8, val_min=10000, val_max=99999, fuzz=0))
         distractors = [n for n in needles if n.is_distractor]
         assert len(distractors) == 2
 
@@ -508,15 +444,7 @@ class TestDenseNeedlesSkipFuzz:
         seeded_random(42)
         haystack_num = 10
         needles_num = 25  # > 10 * 2
-        _, _, needles = generate_haystack_and_needles(
-            haystack_num=haystack_num,
-            needles_num=needles_num,
-            distractors_num=0,
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            fuzz=0.49,
-        )
+        _, _, needles = generate_haystack_and_needles(HaystackConfig(haystack_num=haystack_num, needles_num=needles_num, distractors_num=0, key_len=8, val_min=10000, val_max=99999, fuzz=0.49))
         real = [n for n in needles if not n.is_distractor]
         # With no fuzz, positions should be evenly spaced (or all positions)
         assert len(real) == 10
@@ -528,15 +456,7 @@ class TestDenseNeedlesSkipFuzz:
         seeded_random(42)
         haystack_num = 100
         needles_num = 100  # = 100 * 1, below threshold
-        _, _, needles = generate_haystack_and_needles(
-            haystack_num=haystack_num,
-            needles_num=needles_num,
-            distractors_num=0,
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            fuzz=0.49,
-        )
+        _, _, needles = generate_haystack_and_needles(HaystackConfig(haystack_num=haystack_num, needles_num=needles_num, distractors_num=0, key_len=8, val_min=10000, val_max=99999, fuzz=0.49))
         real = [n for n in needles if not n.is_distractor]
         assert len(real) == 100
         indices = [n.index for n in real]
@@ -548,14 +468,6 @@ class TestDenseNeedlesSkipFuzz:
         seeded_random(42)
         haystack_num = 50
         needles_num = 100  # = 50 * 2, exactly at threshold — fuzz still applies
-        _, _, needles = generate_haystack_and_needles(
-            haystack_num=haystack_num,
-            needles_num=needles_num,
-            distractors_num=0,
-            key_len=8,
-            val_min=10000,
-            val_max=99999,
-            fuzz=0.49,
-        )
+        _, _, needles = generate_haystack_and_needles(HaystackConfig(haystack_num=haystack_num, needles_num=needles_num, distractors_num=0, key_len=8, val_min=10000, val_max=99999, fuzz=0.49))
         real = [n for n in needles if not n.is_distractor]
         assert len(real) == 50

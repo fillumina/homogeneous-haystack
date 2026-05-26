@@ -49,9 +49,9 @@ class TestBuildPrompt:
     def test_all_needles_queries_present(self, haystack_pairs, seeded_random):
         seeded_random(99)
         _, pairs = haystack_pairs
-        from haystack_test import select_needles, build_haystack
-        needles = select_needles(pairs, 10)
-        text, _ = build_haystack(10)
+        from haystack_test import HaystackConfig, build_haystack, select_needles
+        needles = select_needles(pairs, HaystackConfig(needles_num=10))
+        text, _ = build_haystack(HaystackConfig(haystack_num=10))
         result = build_prompt(text, needles)
         user_content = result[1].content
         for needle in needles:

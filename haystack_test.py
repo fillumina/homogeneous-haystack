@@ -150,12 +150,12 @@ class ApiConfig:
 
 @dataclass
 class HaystackConfig:
-    haystack_num: int
-    needles_num: int
-    distractors_num: int
-    key_len: int
-    val_min: int
-    val_max: int
+    haystack_num: int = 100
+    needles_num: int = 5
+    distractors_num: int = 0
+    key_len: int = 8
+    val_min: int = 10000
+    val_max: int = 99999
     fuzz: float = 0.49
     seed: int = 42
 
@@ -288,24 +288,21 @@ def generate_value(val_min: int = 1000, val_max: int = 9999) -> int:
 
 
 def build_haystack(
-    n: int, key_len: int = 8, val_min: int = 10000, val_max: int = 99999
+    cfg: HaystackConfig,
 ) -> tuple[str, list[HaystackPair]]:
     """Build a list of `n` random KEY = VALUE lines.
 
     Args:
-    - n: number of pairs to generate
-    - key_len: length of the random keys (default: 8)
-    - val_min: minimum value (default: 10000)
-    - val_max: maximum value (default: 99999)
+    - cfg: HaystackConfig containing haystack_num, key_len, val_min, val_max
 
     Returns:
     - haystack_text: a single string containing all pairs, one per line, in the format "KEY = VALUE
     - pairs: a list of (key, value) tuples for reference
     """
     pairs: list[HaystackPair] = []
-    for _ in range(n):
-        key = generate_key(key_len)
-        value = generate_value(val_min, val_max)
+    for _ in range(cfg.haystack_num):
+        key = generate_key(cfg.key_len)
+        value = generate_value(cfg.val_min, cfg.val_max)
         pairs.append(HaystackPair(key, value))
     text = "\n".join(f"{k} = {v}" for k, v in pairs)
     return text, pairs
@@ -388,18 +385,16 @@ def pick_needle_positions(n_total: int, n_needles: int) -> list[int]:
 
 
 def create_distractor_keys(
+    cfg: HaystackConfig,
     pairs: list[HaystackPair],
-    n_distractor: int,
     starting_index: int,
-    key_length: int
 ) -> list[Needle]:
-    """Create distractor needles with keys not present in the haystack.
+    """Generate random distractor keys that are not in the haystack.
 
     Args:
+        cfg: HaystackConfig containing distractors_num, key_len.
         pairs: List of haystack key-value pairs (used to avoid key collision).
-        n_distractor: Number of distractor needles to create.
         starting_index: Starting index for distractor position assignment.
-        key_length: Length of randomly generated distractor keys.
 
     Returns:
         List of Needle objects with is_distractor=True and expected=None.
@@ -408,8 +403,8 @@ def create_distractor_keys(
 
     distractor_keys: set[str] = set()
     tries = 0
-    while len(distractor_keys) < n_distractor and tries < n_distractor * MAX_DISTRACTOR_KEY_TRIES:
-        k = generate_key(key_length)
+    while len(distractor_keys) < cfg.distractors_num and tries < cfg.distractors_num * MAX_DISTRACTOR_KEY_TRIES:
+        k = generate_key(cfg.key_len)
         if k not in haystack_keys:
             distractor_keys.add(k)
         tries += 1
@@ -430,14 +425,14 @@ def create_distractor_keys(
 
 def select_needles(
     pairs: list[HaystackPair],
-    n_needles: int,
+    cfg: HaystackConfig,
     fuzz: float = 0.49,
 ) -> list[Needle]:
     """Select real needles from haystack at uniformly spaced intervals.
 
     Args:
         pairs: List of all haystack key-value pairs.
-        n_needles: Number of needles to extract from the haystack.
+        cfg: HaystackConfig containing needles_num, fuzz.
         fuzz: Fraction of the step size to jitter each needle position by (default: 0.49).
               Values >= MAX_FUZZ are silently skipped to avoid position collisions.
 
@@ -445,7 +440,7 @@ def select_needles(
         List of Needle objects extracted from the haystack positions.
     """
     # list n_needles indexes to the pairs list taken at fixed intervals
-    positions: list[int] = pick_needle_positions(len(pairs), n_needles)
+    positions: list[int] = pick_needle_positions(len(pairs), cfg.needles_num)
     if fuzz != 0.0:
         positions = shake_positions(positions, fuzz)
 
@@ -463,33 +458,20 @@ def select_needles(
 
 
 def generate_haystack_and_needles(
-    haystack_num: int,
-    needles_num: int,
-    distractors_num: int,
-    key_len: int,
-    val_min: int,
-    val_max: int,
-    fuzz: float = 0.49,
+    cfg: HaystackConfig,
 ) -> tuple[str, list[HaystackPair], list[Needle]]:
     """Generate haystack text, pair list, and shuffled needles."""
     # Build haystack
-    haystack_text, pairs = build_haystack(
-        haystack_num, key_len, val_min, val_max
-    )
+    haystack_text, pairs = build_haystack(cfg)
 
     # Select real needles from haystack at fixed intervals
     # Skip fuzz when needles are denser than 2 per haystack position —
     # positions are already fully packed, jitter would only cause collisions.
-    effective_fuzz = 0.0 if needles_num > haystack_num * 2 else fuzz
-    real_needles = select_needles(pairs, needles_num, effective_fuzz)
+    effective_fuzz = 0.0 if cfg.needles_num > cfg.haystack_num * 2 else cfg.fuzz
+    real_needles = select_needles(pairs, cfg, effective_fuzz)
 
     # Create distractor needles (keys not in haystack)
-    distractor_needles = create_distractor_keys(
-        pairs,
-        distractors_num,
-        len(real_needles),
-        key_len,
-    )
+    distractor_needles = create_distractor_keys(cfg, pairs, len(real_needles))
 
     # Combine real and distractor needles, then shuffle
     all_needles = real_needles + distractor_needles
@@ -835,15 +817,7 @@ def run_single_experiment(
     # each run gets its own seed
     random.seed(config.haystack.seed + run_index)
 
-    haystack_text, pairs, needles = generate_haystack_and_needles(
-        haystack_num=config.haystack.haystack_num,
-        needles_num=config.haystack.needles_num,
-        distractors_num=config.haystack.distractors_num,
-        key_len=config.haystack.key_len,
-        val_min=config.haystack.val_min,
-        val_max=config.haystack.val_max,
-        fuzz=config.haystack.fuzz,
-    )
+    haystack_text, pairs, needles = generate_haystack_and_needles(config.haystack)
 
     result, debug = query_model(config, needles, haystack_text)
 
