@@ -1430,11 +1430,11 @@ def _print_summary(
 
     # Per-run results
     if summaries:
+        print("\nPer-run results:")
+        run_rows_by_run: dict[int, list[ResultRow]] = {}
+        for r in result.all_rows:
+            run_rows_by_run.setdefault(r.run, []).append(r)
         if is_minimal:
-            print("\nPer-run results:")
-            run_rows_by_run: dict[int, list[ResultRow]] = {}
-            for r in result.all_rows:
-                run_rows_by_run.setdefault(r.run, []).append(r)
             for i, s in enumerate(summaries):
                 stats = result.all_stats[i] if i < len(result.all_stats) else {}
                 run_rows_for_this = run_rows_by_run.get(i, [])
@@ -1444,10 +1444,6 @@ def _print_summary(
                 distractor_pct_run = f"{100*sum(1 for r in distractor_rows if r.correct==1)/len(distractor_rows):.1f}%" if distractor_rows else "N/A"
                 print(f"  Run {i+1}: Needles {needle_pct} | Distractors {distractor_pct_run}")
         else:
-            print("\nPer-run results:")
-            run_rows_by_run: dict[int, list[ResultRow]] = {}
-            for r in result.all_rows:
-                run_rows_by_run.setdefault(r.run, []).append(r)
             for i, s in enumerate(summaries):
                 stats = result.all_stats[i] if i < len(result.all_stats) else {}
                 run_rows_for_this = run_rows_by_run.get(i, [])
