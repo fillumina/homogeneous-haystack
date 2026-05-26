@@ -273,6 +273,7 @@ class TestComputeExperimentSummary:
             correct=correct,
             expected=None if is_distractor else expected,
             actual="12345" if correct else "",
+            is_distractor=is_distractor,
             prompt_tokens=100,
             completion_tokens=50,
             total_tokens=150,

@@ -221,12 +221,14 @@ class TestPrintSummary:
             ResultRow(
                 run=0, haystack_size=100, depth_pct=30.0, correct=0,
                 expected="", actual="HALLUCINATED",
+                is_distractor=True,
                 prompt_tokens=100, completion_tokens=50, total_tokens=150,
                 latency_ms=100.0,
             ),
             ResultRow(
                 run=0, haystack_size=100, depth_pct=40.0, correct=1,
                 expected="", actual="",
+                is_distractor=True,
                 prompt_tokens=100, completion_tokens=50, total_tokens=150,
                 latency_ms=100.0,
             ),
@@ -396,7 +398,8 @@ class TestPrintRunMinimal:
             ResultRow(run=1, haystack_size=100, depth_pct=20.0, correct=0,
                       expected=54321, actual="wrong"),
             ResultRow(run=1, haystack_size=100, depth_pct=30.0, correct=1,
-                      expected="", actual=""),
+                      expected="", actual="",
+                      is_distractor=True),
         ]
         stats = {
             "total_tokens": 150, "total_latency_ms": 200.0,

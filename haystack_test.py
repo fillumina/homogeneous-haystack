@@ -136,6 +136,7 @@ class ResultRow:
     correct: int
     expected: int | str
     actual: str
+    is_distractor: bool = False
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     total_tokens: int | None = None
@@ -772,6 +773,7 @@ def _build_rows(
             correct=score.correct,
             expected=score.expected,
             actual=score.actual,
+            is_distractor=needle.is_distractor,
             prompt_tokens=usage.get("prompt_tokens") if usage else None,
             completion_tokens=usage.get("completion_tokens") if usage else None,
             total_tokens=usage.get("total_tokens") if usage else None,
@@ -927,12 +929,10 @@ def compute_experiment_summary(
         real_needles = []
         distractor_needles = []
         for row in rows:
-            # Determine if this row is a real needle or distractor
-            # Real needles have an integer expected value; distractors have empty expected
-            if isinstance(row.expected, int):
-                real_needles.append(row)
-            else:
+            if row.is_distractor:
                 distractor_needles.append(row)
+            else:
+                real_needles.append(row)
 
         # Collect needle keys from the experiment to match with needles list
         # We use the scored results to determine correctness
@@ -1005,8 +1005,8 @@ def _print_run_minimal(
 
     Format: timestamp Run N/M: Needles X% | Distractors Y%
     """
-    needle_rows = [r for r in run_rows if isinstance(r.expected, int)]
-    distractor_rows = [r for r in run_rows if not isinstance(r.expected, int)]
+    needle_rows = [r for r in run_rows if not r.is_distractor]
+    distractor_rows = [r for r in run_rows if r.is_distractor]
 
     error = stats.get("error")
     truncated = stats.get("truncated")
@@ -1038,8 +1038,8 @@ def _print_run_detail(
         run_rows: All ResultRow objects for this run.
         timestamp: Optional timestamp string for this run. If None, no timestamp line is printed.
     """
-    needle_rows = [r for r in run_rows if isinstance(r.expected, int)]
-    distractor_rows = [r for r in run_rows if not isinstance(r.expected, int)]
+    needle_rows = [r for r in run_rows if not r.is_distractor]
+    distractor_rows = [r for r in run_rows if r.is_distractor]
     needle_correct = sum(1 for r in needle_rows if r.correct == 1)
     distractor_correct = sum(1 for r in distractor_rows if r.correct == 1)
 
@@ -1438,8 +1438,8 @@ def _print_summary(
             for i, s in enumerate(summaries):
                 stats = result.all_stats[i] if i < len(result.all_stats) else {}
                 run_rows_for_this = run_rows_by_run.get(i, [])
-                needle_rows = [r for r in run_rows_for_this if isinstance(r.expected, int)]
-                distractor_rows = [r for r in run_rows_for_this if not isinstance(r.expected, int)]
+                needle_rows = [r for r in run_rows_for_this if not r.is_distractor]
+                distractor_rows = [r for r in run_rows_for_this if r.is_distractor]
                 needle_pct = f"{100*sum(1 for r in needle_rows if r.correct==1)/len(needle_rows):.1f}%" if needle_rows else "N/A"
                 distractor_pct_run = f"{100*sum(1 for r in distractor_rows if r.correct==1)/len(distractor_rows):.1f}%" if distractor_rows else "N/A"
                 print(f"  Run {i+1}: Needles {needle_pct} | Distractors {distractor_pct_run}")
