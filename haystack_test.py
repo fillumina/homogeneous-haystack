@@ -82,31 +82,23 @@ HaystackPair = tuple[str, int]
 Message = dict[str, str]
 
 
-class ChatCompletionChoiceMessage(TypedDict):
-    content: str
-
-
-class ChatCompletionChoice(TypedDict):
-    message: ChatCompletionChoiceMessage
-
-
-class ApiErrorResponse(TypedDict, total=False):
-    error: dict[str, str]
-
-
 class ApiUsage(TypedDict):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
 
 
-class ApiSuccessResponse(TypedDict):
+class ApiResponseBody(TypedDict, total=False):
+    """OpenAI-compatible API response body.
+
+    Success responses contain model, choices, and usage. Error responses
+    contain an error dict. All keys are optional since the API may return
+    a subset at runtime.
+    """
     model: str
-    choices: list[ChatCompletionChoice]
+    choices: list[dict]
     usage: ApiUsage
-
-
-ApiResponseBody = ApiSuccessResponse | ApiErrorResponse
+    error: dict[str, str]
 
 
 class Payload(TypedDict):
@@ -715,18 +707,17 @@ def query_model(
         timeout=config.timeout,
     )
 
-    model_name = raw_response.get("model", "unknown") or "unknown"  # type: ignore[union-attr]
-    response_text = raw_response["choices"][0]["message"].get("content", "")  # type: ignore[typeddict-item]
+    model_name = raw_response.get("model", "unknown") or "unknown"
+    response_text = raw_response.get("choices", [{}])[0].get("message", {}).get("content", "")
     debug = DebugContext(messages, raw_response, response_text, model_name)
 
     # Extract usage info if available (may be missing in error responses or older API versions)
     usage = raw_response.get("usage")
 
     # Consider the output truncated if the completion_tokens equals max_tokens,
-    truncated: bool = (
-        usage is not None
-        and usage.get("completion_tokens") == config.max_tokens  # type: ignore[attr-defined]
-    )
+    truncated: bool = False
+    if usage is not None:
+        truncated = usage.get("completion_tokens") == config.max_tokens
 
     # Parse the response text into a dict of key -> value for scoring.
     parsed: dict[str,str] = parse_response(response_text, needle_keys)
