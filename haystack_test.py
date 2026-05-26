@@ -21,6 +21,7 @@ import socket
 import string
 import sys
 import time
+import os
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass, field
@@ -45,10 +46,17 @@ class Verbosity(Enum):
     DEBUG = "debug"
 
 
+MAX_FUZZ: float = 0.5
+MAX_DISTRACTOR_KEY_TRIES: int = 20
+
 CSV_COLUMNS: list[str] = [
     "run", "haystack_size", "depth_pct", "correct", "expected", "actual",
     "prompt_tokens", "completion_tokens", "total_tokens", "latency_ms",
 ]
+
+_SUMMARY_PREFIX = "ctx-pos-"
+_SUMMARY_BUCKET_COUNT = 10
+_SUMMARY_BUCKET_COLS = [f"{_SUMMARY_PREFIX}{i*10}" for i in range(_SUMMARY_BUCKET_COUNT)]
 
 SUMMARY_CSV_COLUMNS: list[str] = [
     "timestamp",
@@ -65,16 +73,7 @@ SUMMARY_CSV_COLUMNS: list[str] = [
     "distractor_success_pct",
     "tokens_per_sec",
     "total_time_sec",
-    "ctx-pos-0",
-    "ctx-pos-10",
-    "ctx-pos-20",
-    "ctx-pos-30",
-    "ctx-pos-40",
-    "ctx-pos-50",
-    "ctx-pos-60",
-    "ctx-pos-70",
-    "ctx-pos-80",
-    "ctx-pos-90",
+    *_SUMMARY_BUCKET_COLS,
     "distractor_failures",
     "note",
 ]
@@ -316,26 +315,26 @@ def shake_positions(positions: list[int], fuzz_pct: float) -> list[int]:
     """Add random jitter to each position as a fraction of the step size.
 
     Each position is shifted by ±(step * fuzz_pct), clamped to [0, max(positions)].
-    The jitter is capped at fuzz_pct < 0.5 to guarantee no collisions:
+    The jitter is capped at fuzz_pct < MAX_FUZZ to guarantee no collisions:
     int() truncation ensures fuzz_abs < step/2, so two adjacent positions can never
     land on the same value or swap order. If fuzz_pct <= 0 or fewer than 2 positions,
     the original list is returned unchanged.
 
     Args:
         positions: Sorted list of positions to jitter.
-        fuzz_pct: Fraction of the step size to use as jitter range (0.0-0.5 exclusive).
+        fuzz_pct: Fraction of the step size to use as jitter range (0.0 to MAX_FUZZ exclusive).
 
     Returns:
         New list of jittered positions. Order is preserved (no sorting needed)
         because fuzz_abs < step/2 guarantees no position swaps or collisions.
 
     Raises:
-        ValueError: If fuzz_pct is outside [0, 0.5). Must be validated via
+        ValueError: If fuzz_pct is outside [0, MAX_FUZZ). Must be validated via
             validate_params() before calling this function.
     """
-    if fuzz_pct < 0 or fuzz_pct >= 0.5:
+    if fuzz_pct < 0 or fuzz_pct >= MAX_FUZZ:
         raise ValueError(
-            f"fuzz_pct must be in [0, 0.5), got {fuzz_pct}. "
+            f"fuzz_pct must be in [0, {MAX_FUZZ}), got {fuzz_pct}. "
             "Use validate_params() to catch invalid values before running."
         )
     if fuzz_pct <= 0 or len(positions) < 2:
@@ -391,7 +390,7 @@ def create_distractor_keys(
     # contains the set of distractor keys: keys not in the haystack
     distractor_keys: set[str] = set()
     tries = 0
-    while len(distractor_keys) < n_distractor and tries < n_distractor * 20:
+    while len(distractor_keys) < n_distractor and tries < n_distractor * MAX_DISTRACTOR_KEY_TRIES:
         k = generate_key(key_length)
         if k not in haystack_keys:
             distractor_keys.add(k)
@@ -424,7 +423,7 @@ def select_needles(
         pairs: List of all haystack key-value pairs.
         n_needles: Number of needles to extract from the haystack.
         fuzz: Fraction of the step size to jitter each needle position by (default: 0.49).
-              Values >= 0.5 are silently skipped to avoid position collisions.
+              Values >= MAX_FUZZ are silently skipped to avoid position collisions.
 
     Returns:
         List of Needle objects extracted from the haystack positions.
@@ -520,6 +519,10 @@ def build_prompt(haystack_text: str, needles: list[Needle]) -> list[Message]:
 # API query
 # ---------------------------------------------------------------------------
 
+def _calc_latency(start: float) -> float:
+    """Calculate latency in milliseconds from a monotonic start time."""
+    return (time.monotonic() - start) * 1000
+
 def query_llama(
     endpoint: str,
     messages: list[Message],
@@ -561,24 +564,17 @@ def query_llama(
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8")
-            latency_ms = (time.monotonic() - start) * 1000
-            result = json.loads(raw)
-            return result, latency_ms
+            return json.loads(raw), _calc_latency(start)
     except socket.timeout as e:
-        latency_ms = (time.monotonic() - start) * 1000
-        raise HaystackQueryError(f"Timed out after {latency_ms:.0f}ms") from e
+        raise HaystackQueryError(f"Timed out after {_calc_latency(start):.0f}ms") from e
     except urllib.error.HTTPError as e:
-        latency_ms = (time.monotonic() - start) * 1000
         body = e.read().decode("utf-8", errors="replace")
         raise HaystackQueryError(f"HTTP {e.code}: {body}") from e
     except urllib.error.URLError as e:
-        latency_ms = (time.monotonic() - start) * 1000
         raise HaystackQueryError(f"Connection failed: {e.reason}") from e
     except (ConnectionResetError, BrokenPipeError) as e:
-        latency_ms = (time.monotonic() - start) * 1000
         raise HaystackQueryError(f"Connection reset: {e}") from e
     except OSError as e:
-        latency_ms = (time.monotonic() - start) * 1000
         raise HaystackQueryError(f"Connection failed: {e}") from e
 
 
@@ -879,10 +875,10 @@ def _validate_params(config: Config) -> None:
         raise ValueError(f"key_len must be >= 1, got {config.key_len}")
     if config.val_min > config.val_max:
         raise ValueError(f"val_min ({config.val_min}) > val_max ({config.val_max})")
-    if config.fuzz < 0 or config.fuzz >= 0.5:
+    if config.fuzz < 0 or config.fuzz >= MAX_FUZZ:
         raise ValueError(
-            f"fuzz must be in [0, 0.5), got {config.fuzz}. "
-            "Values >= 0.5 risk needle position collisions."
+            f"fuzz must be in [0, {MAX_FUZZ}), got {config.fuzz}. "
+            f"Values >= {MAX_FUZZ} risk needle position collisions."
         )
 
 
@@ -1148,19 +1144,11 @@ def _write_summary_row(config: Config, model_name: str, summary: ExperimentSumma
             "distractor_success_pct": f"{summary.distractor_success_pct:.2f}",
             "tokens_per_sec": summary.tokens_per_sec,
             "total_time_sec": summary.total_time_sec,
-            "ctx-pos-0": summary.ctx_pos_buckets[0],
-            "ctx-pos-10": summary.ctx_pos_buckets[1],
-            "ctx-pos-20": summary.ctx_pos_buckets[2],
-            "ctx-pos-30": summary.ctx_pos_buckets[3],
-            "ctx-pos-40": summary.ctx_pos_buckets[4],
-            "ctx-pos-50": summary.ctx_pos_buckets[5],
-            "ctx-pos-60": summary.ctx_pos_buckets[6],
-            "ctx-pos-70": summary.ctx_pos_buckets[7],
-            "ctx-pos-80": summary.ctx_pos_buckets[8],
-            "ctx-pos-90": summary.ctx_pos_buckets[9],
             "distractor_failures": summary.distractor_failures,
             "note": config.note,
         }
+        for i, col in enumerate(_SUMMARY_BUCKET_COLS):
+            row[col] = summary.ctx_pos_buckets[i]
         writer.writerow(row)
 
 
@@ -1176,10 +1164,8 @@ def _write_summary_csv(config: Config, model_name: str, summaries: list[Experime
     file does not exist or is empty. Delegates row writing to
     _write_summary_row.
     """
-    import os as _os
-
     write_header = False
-    if not _os.path.exists(config.output_filename) or _os.path.getsize(config.output_filename) == 0:
+    if not os.path.exists(config.output_filename) or os.path.getsize(config.output_filename) == 0:
         write_header = True
 
     with open(config.output_filename, "a", newline="") as f:
@@ -1196,7 +1182,7 @@ def _write_summary_csv(config: Config, model_name: str, summaries: list[Experime
 
 
 def _parse_arguments() -> argparse.Namespace :
-    """Parse CLI arguments, run experiments, and write results to CSV."""
+    """Parse CLI arguments and return an argparse.Namespace."""
     parser = argparse.ArgumentParser(
         description="Homogeneous Needle-in-a-Haystack benchmark"
     )
