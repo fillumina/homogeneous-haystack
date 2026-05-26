@@ -212,8 +212,7 @@ class GlobalResult:
         error = model_result.stats.get("error")
         truncated = model_result.stats.get("truncated")
         if error:
-            self.timed_out_runs.append(run_idx + 1)
-            raise Exception(error)
+            raise HaystackQueryError(error)
         elif truncated:
             self.truncated_runs.append(run_idx + 1)
             return GlobalResultType.TRUNCATED
@@ -1339,42 +1338,24 @@ def main() -> None:
                 # Write row to CSV immediately
                 _write_summary_row(config, model_result.model_name, summary)
                 # Print per-run output based on verbosity
-                if status == GlobalResultType.OK:
-                    print(f"Run {run_idx + 1}/{config.repeat}: Done!")
-                    if is_minimal:
-                        _print_run_minimal(
-                            run_idx + 1, config.repeat,
-                            summary, stats, run_rows_for_this, run_timestamp
-                        )
-                    else:
-                        _print_run_detail(run_idx + 1, summary, stats, run_rows_for_this, run_timestamp)
-                        _print_needle_results(
-                            run_idx + 1, model_result.needles, model_result.pairs,
-                            parsed=model_result.parsed,
-                            verbosity=config.verbosity,
-                            debug=model_result.debug,
-                        )
-                    if is_debug:
-                        _print_debug_context(model_result.debug)
-                elif status == GlobalResultType.TRUNCATED:
-                    print(f"Run {run_idx + 1}/{config.repeat}: Done!")
-                    if is_minimal:
-                        _print_run_minimal(
-                            run_idx + 1, config.repeat,
-                            summary, stats, run_rows_for_this, run_timestamp
-                        )
-                    else:
-                        _print_run_detail(run_idx + 1, summary, stats, run_rows_for_this, run_timestamp)
-                        _print_needle_results(
-                            run_idx + 1, model_result.needles, model_result.pairs,
-                            parsed=model_result.parsed,
-                            verbosity=config.verbosity,
-                            debug=model_result.debug,
-                        )
-                    if is_debug:
-                        _print_debug_context(model_result.debug)
+                print(f"Run {run_idx + 1}/{config.repeat}: Done!")
+                if is_minimal:
+                    _print_run_minimal(
+                        run_idx + 1, config.repeat,
+                        summary, stats, run_rows_for_this, run_timestamp
+                    )
                 else:
-                    print(f"model={model_result.model_name}, NO RESULTS")
+                    _print_run_detail(run_idx + 1, summary, stats, run_rows_for_this, run_timestamp)
+                    _print_needle_results(
+                        run_idx + 1, model_result.needles, model_result.pairs,
+                        parsed=model_result.parsed,
+                        verbosity=config.verbosity,
+                        debug=model_result.debug,
+                    )
+                if is_debug:
+                    _print_debug_context(model_result.debug)
+            elif status == GlobalResultType.NO_RESULTS:
+                print(f"model={model_result.model_name}, NO RESULTS")
 
         except HaystackQueryError as e:
             global_result.failed_runs.append(run_idx + 1)
