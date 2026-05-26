@@ -5,6 +5,7 @@ from haystack_test import (
     DebugContext,
     ExperimentSummary,
     GlobalResult,
+    Message,
     Needle,
     ResultRow,
     _print_debug_context,
@@ -39,7 +40,7 @@ class TestTruncate:
 
 class TestPrintMessage:
     def test_prints_role_and_length(self, capsys):
-        msg = {"role": "system", "content": "test content"}
+        msg = Message(role="system", content="test content")
         _print_message(msg, is_full=False)
         captured = capsys.readouterr()
         assert "system" in captured.out
@@ -47,7 +48,7 @@ class TestPrintMessage:
 
     def test_full_vs_truncated(self, capsys):
         long_content = "\n".join(f"line{i}" for i in range(20))
-        msg = {"role": "user", "content": long_content}
+        msg = Message(role="user", content=long_content)
         _print_message(msg, is_full=False)
         captured = capsys.readouterr()
         assert "..." in captured.out
@@ -354,8 +355,8 @@ class TestPrintDebugContext:
     def test_prints_messages_and_response(self, capsys):
         debug = DebugContext(
             messages=[
-                {"role": "system", "content": "system message"},
-                {"role": "user", "content": "user prompt"},
+                Message(role="system", content="system message"),
+                Message(role="user", content="user prompt"),
             ],
             raw_response={
                 "model": "test-model",

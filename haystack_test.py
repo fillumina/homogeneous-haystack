@@ -24,8 +24,18 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass, field
-from typing import TypedDict
+from typing import NamedTuple, TypedDict
 from enum import Enum, auto
+
+
+class HaystackPair(NamedTuple):
+    key: str
+    value: int
+
+
+class Message(NamedTuple):
+    role: str
+    content: str
 
 
 class Verbosity(Enum):
@@ -34,10 +44,6 @@ class Verbosity(Enum):
     FULL = "full"
     DEBUG = "debug"
 
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 CSV_COLUMNS: list[str] = [
     "run", "haystack_size", "depth_pct", "correct", "expected", "actual",
@@ -72,14 +78,6 @@ SUMMARY_CSV_COLUMNS: list[str] = [
     "distractor_failures",
     "note",
 ]
-
-
-# ---------------------------------------------------------------------------
-# Types
-# ---------------------------------------------------------------------------
-
-HaystackPair = tuple[str, int]
-Message = dict[str, str]
 
 
 class ApiUsage(TypedDict):
@@ -289,7 +287,7 @@ def build_haystack(
     for _ in range(n):
         key = generate_key(key_len)
         value = generate_value(val_min, val_max)
-        pairs.append((key, value))
+        pairs.append(HaystackPair(key, value))
     text = "\n".join(f"{k} = {v}" for k, v in pairs)
     return text, pairs
 
@@ -513,8 +511,8 @@ def build_prompt(haystack_text: str, needles: list[Needle]) -> list[Message]:
     for needle in needles:
         lines.append(f"What is the value for {needle.key}?")
     return [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": "\n".join(lines)},
+        Message(role="system", content=SYSTEM_PROMPT),
+        Message(role="user", content="\n".join(lines)),
     ]
 
 
@@ -805,8 +803,8 @@ def _print_message(msg: Message, is_full: bool) -> None:
         msg: The message to print (has role and content keys).
         is_full: If True, print full content; otherwise truncate to 5 lines.
     """
-    role = msg["role"]
-    content = msg["content"]
+    role = msg.role
+    content = msg.content
     print(f"\n--- MESSAGE ({role}, {len(content)} chars) ---")
     if is_full:
         print(content)

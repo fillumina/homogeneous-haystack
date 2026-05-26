@@ -342,7 +342,7 @@ class TestQueryModel:
         assert isinstance(debug, DebugContext)
         assert isinstance(debug.messages, list)
         assert len(debug.messages) == 2
-        assert debug.messages[0]["role"] == "system"
+        assert debug.messages[0].role == "system"
 
     @patch("haystack_test.query_llama")
     def test_usage_is_returned(self, mock_query_llama):
