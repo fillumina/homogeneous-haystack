@@ -50,23 +50,25 @@ python haystack_test.py --haystack-num 5000 --needles-num 100 --repeat 3
 | Argument            | Default                                     | Description                                                              |
 | ------------------- | ------------------------------------------- | ------------------------------------------------------------------------ |
 | `--endpoint`        | `http://localhost:8080/v1/chat/completions` | OpenAI-compatible API endpoint                                           |
-| `--model`           | Auto-detected                               | Model name (omit to detect from API)                                     |
-| `--key-len`         | `8`                                         | Length of random keys (5–12)                                             |
-| `--val-min`         | `10000`                                     | Minimum value range                                                      |
-| `--val-max`         | `99999`                                     | Maximum value range                                                      |
+| `--key-len`         | `8`                                         | Length of random keys, 5–12 (default: 8)                                 |
+| `--val-min`         | `10000`                                     | Minimum value (default: 10000)                                           |
+| `--val-max`         | `99999`                                     | Maximum value (default: 99999)                                           |
 | `--haystack-num`    | `5000`                                      | Number of key-value pairs in the haystack                                |
-| `--needles-num`     | `100`                                       | Number of query targets                                                  |
-| `--distractor-pct`  | `0.08`                                      | Fraction of needles that are distractors                                 |
-| `--distractors-num` | —                                           | Exact number of distractors (mutually exclusive with `--distractor-pct`) |
-| `--temperature`     | `0.0`                                       | Sampling temperature (use 0 for deterministic output)                    |
-| `--max-tokens`      | `240000`                                    | Maximum tokens per response                                              |
-| `--timeout`         | `7200`                                      | Request timeout in seconds                                               |
-| `--repeat`          | `1`                                         | Number of independent runs                                               |
+| `--needles-num`     | `100`                                       | Number of needles to query (default: 100)                                |
+| `--distractors-pct` | —                                           | Fraction of needles that are distractors (0.0–1.0; default is 20 when neither --distractors-num nor --distractors-pct is set) |
+| `--distractors-num` | —                                           | Exact number of distractors (mutually exclusive with `--distractors-pct`) |
+| `--temperature`     | `0.0`                                       | Sampling temperature (default: 0.0)                                      |
+| `--max-tokens`      | `240000`                                    | Maximum tokens per response (default: 240000)                            |
+| `--timeout`         | `7200`                                      | Request timeout in seconds (default: 7200)                               |
+| `--verbosity`       | `medium`                                    | Output verbosity: `minimal`, `medium`, `full`, `debug` (default: medium) |
+| `--repeat`          | `1`                                         | Number of independent runs (default: 1)                                  |
+| `--stop-on-error`   | —                                           | Stop after the first query error                                         |
 | `--seed`            | Random                                      | Base random seed for reproducibility                                     |
-| `--fuzz`            | `0.49`                                      | Jitter needle positions as fraction of step size (0 to disable)          |
-| `--output`          | `results.csv`                               | Output CSV path                                                          |
-| `--show`            | —                                           | Print prompt/response for debugging (`prompt`, `response`, or `all`)     |
-| `--full`            | —                                           | Print full untruncated prompt and response                               |
+| `--fuzz`            | `0.49`                                      | Jitter needle positions as fraction of step size (default: 0.49)         |
+| `--output`          | `results.csv`                               | Output CSV path (default: results.csv)                                   |
+| `--k-quant`         | —                                           | KV-cache key quantization type (e.g. Q8_0, Q4_0, turbo4)                 |
+| `--v-quant`         | —                                           | KV-cache value quantization type (e.g. Q8_0, Q4_0, turbo4)               |
+| `--note`            | —                                           | Freeform note about this experiment                                      |
 
 ### Example: large-context evaluation
 

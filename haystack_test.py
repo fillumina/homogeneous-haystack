@@ -338,7 +338,7 @@ def resolve_distractors_num(
         return distractors_num
     if distractor_pct is not None:
         return int(real_needles * distractor_pct)
-    return int(real_needles * 0.08)
+    return 20
 
 
 def shake_positions(positions: list[int], fuzz_pct: float) -> list[int]:
@@ -1187,10 +1187,10 @@ def _parse_arguments() -> argparse.Namespace :
                         help="Total number of pairs in haystack (default: 5000)")
     parser.add_argument("--needles-num", type=int, default=100,
                         help="Number of needles to query (default: 100)")
-    parser.add_argument("--distractor-pct", type=float, default=None,
-                        help="Fraction of needles that are distractors (0.0-1.0, default: 0.08)")
+    parser.add_argument("--distractors-pct", type=float, default=None,
+                        help="Fraction of needles that are distractors (0.0-1.0; default is 20 when neither --distractors-num nor --distractors-pct is set)")
     parser.add_argument("--distractors-num", type=int, default=None,
-                        help="Exact number of distractors (mutually exclusive with --distractor-pct)")
+                        help="Exact number of distractors (mutually exclusive with --distractors-pct)")
     parser.add_argument("--temperature", type=float, default=0.0,
                         help="Sampling temperature (default: 0.0)")
     parser.add_argument("--max-tokens", type=int, default=240000,
@@ -1226,7 +1226,7 @@ def _create_configuration() -> Config:
 
     actual_real_needles = min(args.haystack_num, args.needles_num)
     actual_distractors = resolve_distractors_num(
-        actual_real_needles, args.distractors_num, args.distractor_pct
+        actual_real_needles, args.distractors_num, args.distractors_pct
     )
     actual_seed = args.seed if args.seed is not None else secrets.randbits(31)
 
