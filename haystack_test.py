@@ -879,7 +879,6 @@ def _validate_params(config: Config) -> None:
 
 
 def compute_experiment_summary(
-    config: Config,
     global_result: GlobalResult,
 ) -> list[ExperimentSummary]:
     """Compute aggregated summary rows from all experiment runs.
@@ -1278,7 +1277,7 @@ def main() -> None:
 
     run_experiment_loop(config, global_result, is_minimal, is_debug)
 
-    summaries = compute_experiment_summary(config, global_result)
+    summaries = compute_experiment_summary(global_result)
     model_name = global_result.all_stats[0].get("model_name", "unknown") if global_result.all_stats else "unknown"
     _write_summary_csv(config, model_name, summaries)
 
@@ -1305,7 +1304,7 @@ def run_experiment_loop(
             )
 
             status = global_result.add_model_result(run_idx, model_result)
-            summaries = compute_experiment_summary(config, global_result)
+            summaries = compute_experiment_summary(global_result)
             summary = summaries[-1] if summaries else None
             stats = global_result.all_stats[run_idx] if global_result.all_stats else {}
             run_rows_for_this = [r for r in global_result.all_rows if r.run == run_idx]

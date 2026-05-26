@@ -294,7 +294,7 @@ class TestComputeExperimentSummary:
     def test_empty_result(self):
         config = self._make_config()
         global_result = _make_global_result()
-        summaries = compute_experiment_summary(config, global_result)
+        summaries = compute_experiment_summary(global_result)
         assert summaries == []
 
     def test_single_run_all_correct(self):
@@ -311,7 +311,7 @@ class TestComputeExperimentSummary:
             'total_completion': 50,
             'tokens_per_sec': 100.0,
         }])
-        summaries = compute_experiment_summary(config, global_result)
+        summaries = compute_experiment_summary(global_result)
         assert len(summaries) == 1
         s = summaries[0]
         assert global_result.all_stats[0].get("model_name") == "test-model"
@@ -338,7 +338,7 @@ class TestComputeExperimentSummary:
             'total_completion': 50,
             'tokens_per_sec': 100.0,
         }])
-        summaries = compute_experiment_summary(config, global_result)
+        summaries = compute_experiment_summary(global_result)
         assert len(summaries) == 1
         s = summaries[0]
         assert s.needle_success_pct == 50.0
@@ -362,7 +362,7 @@ class TestComputeExperimentSummary:
             'total_completion': 50,
             'tokens_per_sec': 100.0,
         }])
-        summaries = compute_experiment_summary(config, global_result)
+        summaries = compute_experiment_summary(global_result)
         assert len(summaries) == 1
         s = summaries[0]
         assert s.needle_success_pct == 100.0
@@ -376,7 +376,7 @@ class TestComputeExperimentSummary:
         config.k_quant = "turbo4"
         config.v_quant = "Q6_K"
         global_result = _make_global_result()
-        summaries = compute_experiment_summary(config, global_result)
+        summaries = compute_experiment_summary(global_result)
         # summaries will be empty but config fields should be set
         # Test with at least one row
         from haystack_test import ResultRow
@@ -393,7 +393,7 @@ class TestComputeExperimentSummary:
             'total_completion': 50,
             'tokens_per_sec': 100.0,
         }]
-        summaries = compute_experiment_summary(config, global_result)
+        summaries = compute_experiment_summary(global_result)
         assert config.k_quant == "turbo4"
         assert config.v_quant == "Q6_K"
 
@@ -413,7 +413,7 @@ class TestComputeExperimentSummary:
             'total_completion': 50,
             'tokens_per_sec': 100.0,
         }])
-        summaries = compute_experiment_summary(config, global_result)
+        summaries = compute_experiment_summary(global_result)
         assert config.note == "my custom note"
 
     def test_timestamp_format(self):
@@ -431,7 +431,7 @@ class TestComputeExperimentSummary:
             'total_completion': 50,
             'tokens_per_sec': 100.0,
         }])
-        summaries = compute_experiment_summary(config, global_result)
+        summaries = compute_experiment_summary(global_result)
         # Should be ISO-like format: YYYY-MM-DDTHH:MM:SS
         import re
         assert re.match(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', config.timestamp)
@@ -458,7 +458,7 @@ class TestComputeExperimentSummary:
                 'tokens_per_sec': 83.3,
             },
         ])
-        summaries = compute_experiment_summary(config, global_result)
+        summaries = compute_experiment_summary(global_result)
         assert len(summaries) == 2
         assert summaries[0].needle_success_pct == 100.0
         assert summaries[1].needle_success_pct == 0.0
