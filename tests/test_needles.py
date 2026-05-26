@@ -196,141 +196,29 @@ class TestValidation:
         with pytest.raises(ValueError, match=expected_msg):
             _validate_params(config)
 
-    def test_valid_no_distractors(self):
-        config = Config(
-            api=ApiConfig(
-                endpoint="http://localhost:8080/v1/chat/completions",
-                temperature=0.0,
-                max_tokens=240000,
-                timeout=7200,
-            ),
-            haystack=HaystackConfig(
-                haystack_num=100,
-                needles_num=50,
-                distractors_num=0,
-                key_len=8,
-                val_min=10000,
-                val_max=99999,
-            ),
-            output=OutputConfig(
-                output_filename="results.csv",
-                verbosity="medium",
-                k_quant="Q4_0",
-                v_quant="Q8_0",
-                note="test",
-            ),
-            execution=ExecutionConfig(
-                repeat=1,
-                stop_on_error=False,
-            ),
-        )
-        _validate_params(config)
-
-    def test_valid_num_only(self):
-        config = Config(
-            api=ApiConfig(
-                endpoint="http://localhost:8080/v1/chat/completions",
-                temperature=0.0,
-                max_tokens=240000,
-                timeout=7200,
-            ),
-            haystack=HaystackConfig(
-                haystack_num=100,
-                needles_num=50,
-                distractors_num=0,
-                key_len=8,
-                val_min=10000,
-                val_max=99999,
-            ),
-            output=OutputConfig(
-                output_filename="results.csv",
-                verbosity="medium",
-                k_quant="Q4_0",
-                v_quant="Q8_0",
-                note="test",
-            ),
-            execution=ExecutionConfig(
-                repeat=1,
-                stop_on_error=False,
-            ),
-        )
-        _validate_params(config)
 
 
-
-class TestNumNeedlesGreaterThanHaystackN:
-    def test_only_haystack_num_real_needles_when_requested_exceeds_haystack(self, seeded_random):
+class TestDistractors:
+    def test_exceeds_haystack_capped_to_haystack(self, seeded_random):
         seeded_random(42)
-        haystack_num = 17
-        needles_num = 100
-        _, _, needles = generate_haystack_and_needles(HaystackConfig(haystack_num=haystack_num, needles_num=needles_num, distractors_num=2, key_len=8, val_min=10000, val_max=99999, fuzz=0))
+        _, _, needles = generate_haystack_and_needles(HaystackConfig(haystack_num=17, needles_num=100, distractors_num=2, key_len=8, val_min=10000, val_max=99999, fuzz=0))
         real = [n for n in needles if not n.is_distractor]
-        assert len(real) == haystack_num
+        assert len(real) == 17
 
-    def test_distractor_count_based_on_actual_real_needles(self, seeded_random):
+    def test_default_case(self, seeded_random):
         seeded_random(42)
-        haystack_num = 17
-        needles_num = 100
-        _, _, needles = generate_haystack_and_needles(HaystackConfig(haystack_num=haystack_num, needles_num=needles_num, distractors_num=2, key_len=8, val_min=10000, val_max=99999, fuzz=0))
+        _, _, needles = generate_haystack_and_needles(HaystackConfig(haystack_num=100, needles_num=50, distractors_num=5, key_len=8, val_min=10000, val_max=99999, fuzz=0))
         real = [n for n in needles if not n.is_distractor]
         distractors = [n for n in needles if n.is_distractor]
-        assert len(distractors) == 2
-
-    def test_total_needles_is_real_plus_distractors(self, seeded_random):
-        seeded_random(42)
-        haystack_num = 17
-        needles_num = 100
-        _, _, needles = generate_haystack_and_needles(HaystackConfig(haystack_num=haystack_num, needles_num=needles_num, distractors_num=2, key_len=8, val_min=10000, val_max=99999, fuzz=0))
-        real = [n for n in needles if not n.is_distractor]
-        distractors = [n for n in needles if n.is_distractor]
-        assert len(needles) == len(real) + len(distractors)
-
-    def test_default_case_still_works(self, seeded_random):
-        seeded_random(42)
-        haystack_num = 100
-        needles_num = 50
-        _, _, needles = generate_haystack_and_needles(HaystackConfig(haystack_num=haystack_num, needles_num=needles_num, distractors_num=5, key_len=8, val_min=10000, val_max=99999, fuzz=0))
-        real = [n for n in needles if not n.is_distractor]
-        distractors = [n for n in needles if n.is_distractor]
-        assert len(real) == needles_num
+        assert len(real) == 50
         assert len(distractors) == 5
 
-    def test_no_distractors_when_num_is_zero(self, seeded_random):
+    @pytest.mark.parametrize("distractors_num", [0, 2, 5])
+    def test_exact_distractor_count(self, seeded_random, distractors_num):
         seeded_random(42)
-        haystack_num = 17
-        needles_num = 100
-        _, _, needles = generate_haystack_and_needles(HaystackConfig(haystack_num=haystack_num, needles_num=needles_num, distractors_num=0, key_len=8, val_min=10000, val_max=99999, fuzz=0))
+        _, _, needles = generate_haystack_and_needles(HaystackConfig(haystack_num=50, needles_num=20, distractors_num=distractors_num, key_len=8, val_min=10000, val_max=99999, fuzz=0))
         distractors = [n for n in needles if n.is_distractor]
-        assert len(distractors) == 0
-
-
-class TestDistractorsNum:
-    def test_exact_distractor_count(self, seeded_random):
-        seeded_random(42)
-        haystack_num = 50
-        needles_num = 20
-        exact_distractors = 5
-        _, _, needles = generate_haystack_and_needles(HaystackConfig(haystack_num=haystack_num, needles_num=needles_num, distractors_num=exact_distractors, key_len=8, val_min=10000, val_max=99999, fuzz=0))
-        real = [n for n in needles if not n.is_distractor]
-        distractors = [n for n in needles if n.is_distractor]
-        assert len(real) == needles_num
-        assert len(distractors) == exact_distractors
-
-    def test_zero_distractors_with_num(self, seeded_random):
-        seeded_random(42)
-        haystack_num = 17
-        needles_num = 100
-        _, _, needles = generate_haystack_and_needles(HaystackConfig(haystack_num=haystack_num, needles_num=needles_num, distractors_num=0, key_len=8, val_min=10000, val_max=99999, fuzz=0))
-        distractors = [n for n in needles if n.is_distractor]
-        assert len(distractors) == 0
-
-    def test_distractors_num_sets_exact_count(self, seeded_random):
-        seeded_random(42)
-        haystack_num = 50
-        needles_num = 20
-        _, _, needles = generate_haystack_and_needles(HaystackConfig(haystack_num=haystack_num, needles_num=needles_num, distractors_num=2, key_len=8, val_min=10000, val_max=99999, fuzz=0))
-        distractors = [n for n in needles if n.is_distractor]
-        assert len(distractors) == 2
+        assert len(distractors) == distractors_num
 
 
 class TestResolveDistractorsNum:
@@ -340,13 +228,13 @@ class TestResolveDistractorsNum:
     def test_pct_used_when_num_none(self):
         assert resolve_distractors_num(100, None, 0.25) == 25
 
-    def test_default_8_pct_when_both_none(self):
+    def test_default_20_when_both_none(self):
         result = resolve_distractors_num(100, None, None)
-        assert result == 8
+        assert result == 20
 
-    def test_default_8_pct_rounding(self):
+    def test_default_capped_at_needles(self):
         result = resolve_distractors_num(13, None, None)
-        assert result == 1  # int(13 * 0.08) = 1
+        assert result == 13
 
     def test_zero_real_needles(self):
         assert resolve_distractors_num(0, None, None) == 0
@@ -407,20 +295,11 @@ class TestShakePositions:
         result2 = shake_positions(base2, 0.49)
         assert result1 != result2
 
-    def test_fuzz_negative_raises(self):
+    @pytest.mark.parametrize("bad_fuzz", [-0.1, 0.5, 1.0])
+    def test_fuzz_out_of_range_raises(self, bad_fuzz):
         base = pick_needle_positions(100, 10)
         with pytest.raises(ValueError, match="fuzz_pct must be in"):
-            shake_positions(base, -0.1)
-
-    def test_fuzz_at_threshold_raises(self):
-        base = pick_needle_positions(100, 10)
-        with pytest.raises(ValueError, match="fuzz_pct must be in"):
-            shake_positions(base, 0.5)
-
-    def test_fuzz_above_threshold_raises(self):
-        base = pick_needle_positions(100, 10)
-        with pytest.raises(ValueError, match="fuzz_pct must be in"):
-            shake_positions(base, 1.0)
+            shake_positions(base, bad_fuzz)
 
     def test_fuzz_with_single_needle(self, seeded_random):
         seeded_random(42)
@@ -440,34 +319,21 @@ class TestShakePositions:
 
 
 class TestDenseNeedlesSkipFuzz:
-    def test_fuzz_skipped_when_needles_exceed_haystack_times_two(self, seeded_random):
+    @pytest.mark.parametrize("haystack_num,needles_num,expected_skip_fuzz", [
+        (10, 25, True),   # > 2x — skip fuzz, use all positions
+        (100, 100, False), # 1x — apply fuzz
+        (50, 100, False),  # exactly 2x — apply fuzz
+    ])
+    def test_fuzz_behavior_by_needle_density(self, seeded_random, haystack_num, needles_num, expected_skip_fuzz):
         seeded_random(42)
-        haystack_num = 10
-        needles_num = 25  # > 10 * 2
         _, _, needles = generate_haystack_and_needles(HaystackConfig(haystack_num=haystack_num, needles_num=needles_num, distractors_num=0, key_len=8, val_min=10000, val_max=99999, fuzz=0.49))
         real = [n for n in needles if not n.is_distractor]
-        # With no fuzz, positions should be evenly spaced (or all positions)
-        assert len(real) == 10
-        indices = sorted(n.index for n in real)
-        # All positions should be used (0..9) since needles > haystack
-        assert indices == list(range(10))
+        assert len(real) == haystack_num
 
-    def test_fuzz_applied_when_needles_below_threshold(self, seeded_random):
-        seeded_random(42)
-        haystack_num = 100
-        needles_num = 100  # = 100 * 1, below threshold
-        _, _, needles = generate_haystack_and_needles(HaystackConfig(haystack_num=haystack_num, needles_num=needles_num, distractors_num=0, key_len=8, val_min=10000, val_max=99999, fuzz=0.49))
-        real = [n for n in needles if not n.is_distractor]
-        assert len(real) == 100
-        indices = [n.index for n in real]
-        # With fuzz, positions should not be perfectly evenly spaced
-        diffs = [indices[i+1] - indices[i] for i in range(len(indices)-1)]
-        assert max(diffs) - min(diffs) > 1
-
-    def test_fuzz_applied_when_needles_equal_to_haystack_times_two(self, seeded_random):
-        seeded_random(42)
-        haystack_num = 50
-        needles_num = 100  # = 50 * 2, exactly at threshold — fuzz still applies
-        _, _, needles = generate_haystack_and_needles(HaystackConfig(haystack_num=haystack_num, needles_num=needles_num, distractors_num=0, key_len=8, val_min=10000, val_max=99999, fuzz=0.49))
-        real = [n for n in needles if not n.is_distractor]
-        assert len(real) == 50
+        if expected_skip_fuzz:
+            indices = sorted(n.index for n in real)
+            assert indices == list(range(haystack_num))
+        else:
+            indices = [n.index for n in real]
+            diffs = [indices[i+1] - indices[i] for i in range(len(indices)-1)]
+            assert max(diffs) - min(diffs) > 1

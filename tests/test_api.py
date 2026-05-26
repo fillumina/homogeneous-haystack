@@ -156,57 +156,17 @@ class TestQueryLlama:
         assert "application/json" in req.headers.get("Content-type") or req.headers.get("Content-Type") == "application/json"
         assert req.method == "POST"
 
-    def test_socket_timeout_raises_haystack_query_error(self):
+    @pytest.mark.parametrize("exception,expected_match", [
+        (socket.timeout("timed out"), "Timed out"),
+        (urllib.error.HTTPError("http://localhost:8080/v1/chat/completions", 400, "Bad Request", {}, None), "HTTP 400"),
+        (urllib.error.HTTPError("http://localhost:8080/v1/chat/completions", 500, "Internal Server Error", {}, MagicMock()), "HTTP 500"),
+        (urllib.error.URLError(ConnectionRefusedError("Connection refused")), "Connection failed"),
+    ])
+    def test_exceptions_raise_haystack_query_error(self, exception, expected_match):
         with patch("haystack_test.urllib.request.urlopen") as mock_urlopen:
-            mock_urlopen.side_effect = socket.timeout("timed out")
+            mock_urlopen.side_effect = exception
 
-            with pytest.raises(HaystackQueryError, match="Timed out"):
-                query_llama(
-                    "http://localhost:8080/v1/chat/completions",
-                    [{"role": "user", "content": "test"}],
-                    timeout=1,
-                )
-
-    def test_http_error_raises_haystack_query_error(self):
-        with patch("haystack_test.urllib.request.urlopen") as mock_urlopen:
-            http_error = urllib.error.HTTPError(
-                "http://localhost:8080/v1/chat/completions",
-                400,
-                "Bad Request",
-                {},
-                None,
-            )
-            mock_urlopen.side_effect = http_error
-
-            with pytest.raises(HaystackQueryError, match="HTTP 400"):
-                query_llama(
-                    "http://localhost:8080/v1/chat/completions",
-                    [{"role": "user", "content": "test"}],
-                )
-
-    def test_http_error_500_raises(self):
-        with patch("haystack_test.urllib.request.urlopen") as mock_urlopen:
-            http_error = urllib.error.HTTPError(
-                "http://localhost:8080/v1/chat/completions",
-                500,
-                "Internal Server Error",
-                {},
-                MagicMock(),
-            )
-            mock_urlopen.side_effect = http_error
-
-            with pytest.raises(HaystackQueryError, match="HTTP 500"):
-                query_llama(
-                    "http://localhost:8080/v1/chat/completions",
-                    [{"role": "user", "content": "test"}],
-                )
-
-    def test_url_error_raises_haystack_query_error(self):
-        with patch("haystack_test.urllib.request.urlopen") as mock_urlopen:
-            url_error = urllib.error.URLError(ConnectionRefusedError("Connection refused"))
-            mock_urlopen.side_effect = url_error
-
-            with pytest.raises(HaystackQueryError, match="Connection failed"):
+            with pytest.raises(HaystackQueryError, match=expected_match):
                 query_llama(
                     "http://localhost:8080/v1/chat/completions",
                     [{"role": "user", "content": "test"}],
@@ -291,7 +251,7 @@ class TestQueryModel:
         assert debug.model_name == "test-model"
 
     @patch("haystack_test.query_llama")
-    def test_error_propagates_haystack_query_error(self, mock_query_llama):
+    def test_error_propagates(self, mock_query_llama):
         mock_query_llama.side_effect = HaystackQueryError("API failed")
 
         config = self._make_config()
@@ -299,17 +259,6 @@ class TestQueryModel:
         haystack_text = "ABCD1234 = 1234"
 
         with pytest.raises(HaystackQueryError, match="API failed"):
-            query_model(config, needles, haystack_text)
-
-    @patch("haystack_test.query_llama")
-    def test_error_propagates_without_debug(self, mock_query_llama):
-        mock_query_llama.side_effect = HaystackQueryError("API failed")
-
-        config = self._make_config()
-        needles = self._make_needles()
-        haystack_text = "ABCD1234 = 1234"
-
-        with pytest.raises(HaystackQueryError):
             query_model(config, needles, haystack_text)
 
     @patch("haystack_test.query_llama")
@@ -341,9 +290,9 @@ class TestQueryModel:
         assert result.truncated is False
 
     @patch("haystack_test.query_llama")
-    def test_debug_is_returned(self, mock_query_llama):
+    def test_debug_and_usage_fields(self, mock_query_llama):
         mock_query_llama.return_value = (
-            self._make_mock_success_response("ABCD1234 = 1234"),
+            self._make_mock_success_response("my custom response"),
             100.0,
         )
 
@@ -357,50 +306,8 @@ class TestQueryModel:
         assert isinstance(debug.messages, list)
         assert len(debug.messages) == 2
         assert debug.messages[0].role == "system"
-
-    @patch("haystack_test.query_llama")
-    def test_usage_is_returned(self, mock_query_llama):
-        mock_query_llama.return_value = (
-            self._make_mock_success_response("ABCD1234 = 1234"),
-            100.0,
-        )
-
-        config = self._make_config()
-        needles = self._make_needles()
-        haystack_text = "ABCD1234 = 1234"
-
-        result, debug = query_model(config, needles, haystack_text)
-
         assert result.usage is not None
         assert result.usage["total_tokens"] == 150
-
-    @patch("haystack_test.query_llama")
-    def test_response_text_in_debug(self, mock_query_llama):
-        mock_query_llama.return_value = (
-            self._make_mock_success_response("my custom response"),
-            100.0,
-        )
-
-        config = self._make_config()
-        needles = self._make_needles()
-        haystack_text = "ABCD1234 = 1234"
-
-        result, debug = query_model(config, needles, haystack_text)
-
         assert debug.response_text == "my custom response"
-
-    @patch("haystack_test.query_llama")
-    def test_raw_response_in_debug(self, mock_query_llama):
-        mock_query_llama.return_value = (
-            self._make_mock_success_response("ABCD1234 = 1234"),
-            100.0,
-        )
-
-        config = self._make_config()
-        needles = self._make_needles()
-        haystack_text = "ABCD1234 = 1234"
-
-        result, debug = query_model(config, needles, haystack_text)
-
         assert debug.raw_response is not None
         assert debug.raw_response["model"] == "test-model"

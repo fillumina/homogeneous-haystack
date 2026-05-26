@@ -60,7 +60,7 @@ python haystack_test.py --haystack-num 5000 --needles-num 100 --repeat 3
 | `--temperature`     | `0.0`                                       | Sampling temperature (default: 0.0)                                      |
 | `--max-tokens`      | `240000`                                    | Maximum tokens per response (default: 240000)                            |
 | `--timeout`         | `7200`                                      | Request timeout in seconds (default: 7200)                               |
-| `--verbosity`       | `medium`                                    | Output verbosity: `minimal`, `medium`, `full`, `debug` (default: medium) |
+| `--verbosity` / `-v` | `medium`                                   | Output verbosity: `minimal`, `medium`, `full`, `debug` (default: medium) |
 | `--repeat`          | `1`                                         | Number of independent runs (default: 1)                                  |
 | `--stop-on-error`   | —                                           | Stop after the first query error                                         |
 | `--seed`            | Random                                      | Base random seed for reproducibility                                     |

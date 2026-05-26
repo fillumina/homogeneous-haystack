@@ -338,7 +338,7 @@ def resolve_distractors_num(
         return distractors_num
     if distractor_pct is not None:
         return int(real_needles * distractor_pct)
-    return 20
+    return min(20, real_needles)
 
 
 def shake_positions(positions: list[int], fuzz_pct: float) -> list[int]:
