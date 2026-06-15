@@ -19,6 +19,7 @@ import random
 import secrets
 import socket
 import string
+import sys
 import time
 import os
 import urllib.error
@@ -1216,6 +1217,10 @@ def _parse_arguments() -> argparse.Namespace :
                         help="KV-cache value quantization type (e.g. Q8_0, Q4_0, turbo4)")
     parser.add_argument("--note", default="",
                         help="Freeform note about this experiment")
+
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(0)
 
     args: argparse.Namespace = parser.parse_args()
     return args
